@@ -1,0 +1,14 @@
+
+build.ninja
+.ninja_deps
+.ninja_log
+
+cmake_install.cmake
+CMakeFiles
+CMakeCache.txt
+
+chat
+
+.vscode
+
+sugarcane-ai
