@@ -1,7 +1,7 @@
 #ifndef MAIN_H
 #define MAIN_H
 
-#include <lib/base.h>
+#include <include/base.h>
 #include "protocol.h"
 
 class ISugarcane;

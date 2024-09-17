@@ -1,4 +1,4 @@
-#include <lib/base.h>
+#include <include/base.h>
 #include <teeworlds/six/main.h>
 #include <teeworlds/six/generated_protocol.h>
 #include <teeworlds/six/iclient.h>

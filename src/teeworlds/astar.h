@@ -24,7 +24,7 @@ SOFTWARE.
 #ifndef ASTAR_H
 #define ASTAR_H
 
-#include <lib/base.h>
+#include <include/base.h>
 #include <algorithm>
 #include <cmath>
 #include <map>

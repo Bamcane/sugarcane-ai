@@ -1,5 +1,5 @@
-#ifndef LIB_BASE_H
-#define LIB_BASE_H
+#ifndef INCLUDE_BASE_H
+#define INCLUDE_BASE_H
 
 #include <ctime>
 #include <cstdint>
@@ -31,4 +31,4 @@ struct std::formatter<string>
 #define log_msgf(from, format_str, ...) \
     std::cout<< std::format("[{:x}][{}] ", time(0), from) << std::format(format_str, __VA_ARGS__) << std::endl
 
-#endif // LIB_BASE_H
+#endif // INCLUDE_BASE_H

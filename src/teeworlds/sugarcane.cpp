@@ -1,4 +1,4 @@
-#include <lib/base.h>
+#include <include/base.h>
 
 #include <teeworlds/map/convert.h>
 
@@ -153,6 +153,7 @@ static std::array<SClient, MAX_CLIENTS> s_aClients;
 static std::vector<SLaser> s_vLasers;
 
 static int s_LocalID;
+static int s_TargetTeam;
 static string s_NowName;
 
 static vec2 s_GoToPos;
@@ -171,6 +172,7 @@ static int s_MapHeight;
 static CNetObj_PlayerInput s_LastInput = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 static CNetObj_PlayerInput s_TickInput = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 static std::chrono::system_clock::time_point s_LastNameChangeTime = std::chrono::system_clock::now();
+static std::chrono::system_clock::time_point s_LastTeamChangeTime = std::chrono::system_clock::now();
 static std::chrono::system_clock::time_point s_LastInputTime = std::chrono::system_clock::now();
 
 static const char *s_apInfectClasses[] = {"Hunter", "Smoker", "Spider", "Ghoul", "Undead", "Witch", "Voodoo", "Slug", "Boomer", "Bat", "Ghost"};
@@ -335,6 +337,7 @@ void CSugarcane::InitTwsPart()
     s_NowName = "Sugarcane";
     s_MapWidth = 0;
     s_MapHeight = 0;
+    s_TargetTeam = 0;
     s_MouseTarget = vec2(0.f, 0.f);
 }
 
@@ -354,7 +357,7 @@ void CSugarcane::InputPrediction()
     {
         vec2 TargetPos = vec2(s_pTarget->m_Character.m_X, s_pTarget->m_Character.m_Y);
         ESMapItems FrontBlock = IntersectLine(NowPos, TargetPos, nullptr, nullptr);
-        if(!(FrontBlock & ESMapItems::TILEFLAG_SOLID))
+        if(!(FrontBlock & ESMapItems::TILEFLAG_SOLID) && distance(s_MouseTarget, normalize(TargetPos - NowPos)) < 0.1f)
         {
             if(IsInfectClass(s_LocalID))
             {
@@ -570,8 +573,12 @@ void CSugarcane::RecvDDNetMsg(int MsgID, void *pData)
 
 void CSugarcane::DDNetTick(int *pInputData)
 {
+    int OtherPlayersCount = 0;
     for(auto& Client : s_aClients)
     {
+        if(Client.m_Active && Client.m_ClientID != s_LocalID && Client.m_Team != TEAM_SPECTATORS)
+            OtherPlayersCount++;
+
         if(Client.m_Active && 
             s_LastNameChangeTime + std::chrono::seconds(3) < std::chrono::system_clock::now() && 
             string(Client.m_aName) == string("Sugarcane") &&
@@ -592,6 +599,39 @@ void CSugarcane::DDNetTick(int *pInputData)
             s_LastNameChangeTime = std::chrono::system_clock::now();
             s_NowName = "TestSugarcane";
             log_msg("sugarcane/tws", "send rename msg");
+        }
+    }
+
+    if(OtherPlayersCount)
+    {
+        if(s_aClients[s_LocalID].m_Team == TEAM_SPECTATORS)
+        {
+            s_TargetTeam = TEAM_RED;
+        }
+    }
+    else
+    {
+        s_TargetTeam = TEAM_SPECTATORS;
+    }
+
+    if(s_TargetTeam != s_aClients[s_LocalID].m_Team)
+    {
+        if(s_LastTeamChangeTime + std::chrono::seconds(3) < std::chrono::system_clock::now())
+        {
+            // use elder sister
+            CNetMsg_Cl_ChangeInfo Msg;
+			Msg.m_pName = "TestSugarcane";
+			Msg.m_pClan = "Mid·Night";
+			Msg.m_Country = 156;
+			Msg.m_pSkin = "santa_limekitty";
+			Msg.m_UseCustomColor = 1;
+			Msg.m_ColorBody = 0;
+			Msg.m_ColorFeet = 0;
+            DDNet::s_pClient->SendPackMsg(&Msg, MSGFLAG_VITAL);
+
+            s_LastNameChangeTime = std::chrono::system_clock::now();
+            s_NowName = "TestSugarcane";
+            log_msg("sugarcane/tws", "send switch team msg");
         }
     }
 

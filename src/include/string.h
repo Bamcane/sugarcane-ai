@@ -1,5 +1,5 @@
-#ifndef LIB_STRING_H
-#define LIB_STRING_H
+#ifndef INCLUDE_STRING_H
+#define INCLUDE_STRING_H
 
 #include <cstddef>
 #include <cstring>
@@ -215,4 +215,4 @@ public:
         return str[index];
     }
 };
-#endif // LIB_STRING_H
+#endif // INCLUDE_STRING_H

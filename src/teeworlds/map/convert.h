@@ -1,7 +1,7 @@
 #ifndef TEEWORLDS_MAP_CONVERT_H
 #define TEEWORLDS_MAP_CONVERT_H
 
-#include <lib/string.h>
+#include <include/string.h>
 #include <cstdint>
 
 enum class ESMapItems : int32_t
