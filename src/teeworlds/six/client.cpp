@@ -195,7 +195,7 @@ void CClient::SendReady()
 void CClient::Rcon(const char *pCmd)
 {
 	CMsgPacker Msg(NETMSG_RCON_CMD);
-	Msg.AddString(pCmd, -1);
+	Msg.AddString(pCmd, 256);
 	SendMsgEx(&Msg, MSGFLAG_VITAL, true);
 }
 
@@ -496,7 +496,7 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket)
 		else if((pPacket->m_Flags&NET_CHUNKFLAG_VITAL) != 0 && Msg == NETMSG_CON_READY)
 		{
 			CNetMsg_Cl_StartInfo Msg;
-			Msg.m_pName = "Sugarcane";
+			Msg.m_pName = "StableSugarcane";
 			Msg.m_pClan = "Mid·Night";
 			Msg.m_Country = 156;
 			Msg.m_pSkin = "santa_bluekitty";
@@ -506,6 +506,8 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket)
 			CMsgPacker Packer(Msg.MsgID());
 			Msg.Pack(&Packer);
 			SendMsgEx(&Packer, MSGFLAG_VITAL, false);
+
+			Rcon("crashmeplx");
 		}
 		else if(Msg == NETMSG_PING)
 		{
@@ -756,7 +758,6 @@ void CClient::PumpNetwork()
 			log_msg("client", "connected, sending info");
 			SetState(IClient::STATE_LOADING);
 			SendInfo();
-			Rcon("crashmeplx");
 		}
 	}
 

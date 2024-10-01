@@ -13,9 +13,8 @@ private:
     typedef void (*TALKBACK_FUNCTION)(string Talk);
 
     void InitTalkPart();
-    void BackTalk(const char *pFrom, TALKBACK_FUNCTION Function);
+    void BackTalk(const char *pFrom, const char *pMessage, TALKBACK_FUNCTION Function);
 
-    bool m_TalkPartInit;
 private:
     /* teeworlds */
     void InitTwsPart();

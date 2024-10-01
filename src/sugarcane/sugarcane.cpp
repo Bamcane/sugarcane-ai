@@ -32,7 +32,7 @@ void CSugarcane::Run()
 	signal(SIGINT, HandleSigIntTerm);
 	signal(SIGTERM, HandleSigIntTerm);
 
-    DDNet::ConnectTo(BAMCANE_AISERVER, this);
+    DDNet::ConnectTo(CR_SERVER, this);
 }
 
 ISugarcane *CreateSugarcane() { return new CSugarcane(); }

@@ -5,6 +5,7 @@
 #include <teeworlds/six/main.h>
 #include <teeworlds/six/generated_protocol.h>
 #include <teeworlds/six/client.h>
+#include <teeworlds/six/math.h>
 #include <teeworlds/six/vmath.h>
 
 #include <base/storage.h>
@@ -48,20 +49,17 @@ float VelocityRamp(float Value, float Start, float Range, float Curvature)
 
 struct SCharacter
 {
-	float m_X;
-	float m_Y;
-	float m_VelX;
-	float m_VelY;
+    int64_t m_LastSnapshotTick;
+    vec2 m_Pos;
+    vec2 m_Vel;
+    vec2 m_HookPos;
+    vec2 m_HookDir;
 	int m_Angle;
 	int m_Direction;
 	int m_Jumped;
 	int m_HookedPlayer;
 	int m_HookState;
 	int m_HookTick;
-	float m_HookX;
-	float m_HookY;
-	float m_HookDx;
-	float m_HookDy;
 	int m_PlayerFlags;
 	int m_Health;
 	int m_Armor;
@@ -70,22 +68,20 @@ struct SCharacter
 	int m_Emote;
 	int m_AttackTick;
 
+    void Prediction();
+
     SCharacter& operator=(const CNetObj_Character& Source)
     {
-        m_X = (float) Source.m_X;
-        m_Y = (float) Source.m_Y;
-        m_VelX = (float) Source.m_VelX / 256.0f;
-        m_VelY = (float) Source.m_VelY / 256.0f;
+        m_Pos = vec2((float) Source.m_X, (float) Source.m_Y);
+        m_Vel = vec2((float) Source.m_VelX / 256.0f, (float) Source.m_Y / 256.0f);
+        m_HookPos = vec2((float) Source.m_HookX, (float) Source.m_HookY);
+        m_HookDir = vec2((float) Source.m_HookDx / 256.0f, (float) Source.m_HookDy / 256.0f);
         m_Angle = Source.m_Angle;
         m_Direction = Source.m_Direction;
         m_Jumped = Source.m_Jumped;
         m_HookedPlayer = Source.m_HookedPlayer;
         m_HookState = Source.m_HookState;
         m_HookTick = Source.m_HookTick;
-        m_HookX = (float) Source.m_HookX;
-        m_HookY = (float) Source.m_HookY;
-        m_HookDx = (float) Source.m_HookDx / 256.0f;
-        m_HookDy = (float) Source.m_HookDy / 256.0f;
         m_PlayerFlags = Source.m_PlayerFlags;
         m_Health = Source.m_Health;
         m_Armor = Source.m_Armor;
@@ -175,7 +171,7 @@ static std::chrono::system_clock::time_point s_LastNameChangeTime = std::chrono:
 static std::chrono::system_clock::time_point s_LastTeamChangeTime = std::chrono::system_clock::now();
 static std::chrono::system_clock::time_point s_LastInputTime = std::chrono::system_clock::now();
 
-static const char *s_apInfectClasses[] = {"Hunter", "Smoker", "Spider", "Ghoul", "Undead", "Witch", "Voodoo", "Slug", "Boomer", "Bat", "Ghost"};
+static const char *s_apInfectClasses[] = {"Hunter", "Smoker", "Spider", "Ghoul", "Undead", "Witch", "Voodoo", "Slug", "Boomer", "Bat", "Ghost", "Freezer", "Nightmare", "Slime", ""};
 static bool IsInfectClass(const char *pClassName)
 {
     for(auto& Infect : s_apInfectClasses)
@@ -329,12 +325,266 @@ static void MoveBox(vec2 *pInoutPos, vec2 *pInoutVel, vec2 Size, float Elasticit
     *pInoutVel = Vel;
 }
 
+void SCharacter::Prediction()
+{
+    float PhysSize = 28.0f;// get ground state
+	bool Grounded = false;
+	if(CheckPoint(m_Pos.x+PhysSize/2, m_Pos.y+PhysSize/2+5))
+		Grounded = true;
+	if(CheckPoint(m_Pos.x-PhysSize/2, m_Pos.y+PhysSize/2+5))
+		Grounded = true;
+
+    CTuningParams *pTuning = DDNet::s_pClient->Tuning();
+	m_Vel.y += pTuning->m_Gravity;
+
+	float MaxSpeed = Grounded ? pTuning->m_GroundControlSpeed : pTuning->m_AirControlSpeed;
+	float Accel = Grounded ? pTuning->m_GroundControlAccel : pTuning->m_AirControlAccel;
+	float Friction = Grounded ? pTuning->m_GroundFriction : pTuning->m_AirFriction;
+
+	// add the speed modification according to players wanted direction
+	if(m_Direction < 0)
+		m_Vel.x = SaturatedAdd(-MaxSpeed, MaxSpeed, m_Vel.x, -Accel);
+	if(m_Direction > 0)
+		m_Vel.x = SaturatedAdd(-MaxSpeed, MaxSpeed, m_Vel.x, Accel);
+	if(m_Direction == 0)
+		m_Vel.x *= Friction;
+
+	// handle jumping
+	// 1 bit = to keep track if a jump has been made on this input
+	// 2 bit = to keep track if a air-jump has been made
+	if(Grounded)
+		m_Jumped &= ~2;
+
+	// do hook
+	if(m_HookState == HOOK_IDLE)
+	{
+		m_HookedPlayer = -1;
+		m_HookState = HOOK_IDLE;
+		m_HookPos = m_Pos;
+	}
+	else if(m_HookState >= HOOK_RETRACT_START && m_HookState < HOOK_RETRACT_END)
+	{
+		m_HookState++;
+	}
+	else if(m_HookState == HOOK_RETRACT_END)
+	{
+		m_HookState = HOOK_RETRACTED;
+		m_HookState = HOOK_RETRACTED;
+	}
+	else if(m_HookState == HOOK_FLYING)
+	{
+		vec2 NewPos = m_HookPos+m_HookDir*pTuning->m_HookFireSpeed;
+		if(distance(m_Pos, NewPos) > pTuning->m_HookLength)
+		{
+			m_HookState = HOOK_RETRACT_START;
+			NewPos = m_Pos + normalize(NewPos-m_Pos) * pTuning->m_HookLength;
+		}
+
+		// make sure that the hook doesn't go though the ground
+		bool GoingToHitGround = false;
+		bool GoingToRetract = false;
+		ESMapItems Hit = IntersectLine(m_HookPos, NewPos, &NewPos, 0);
+		if(Hit != ESMapItems::TILEFLAG_AIR)
+		{
+			if(Hit&ESMapItems::TILEFLAG_UNHOOKABLE)
+				GoingToRetract = true;
+			else
+				GoingToHitGround = true;
+		}
+
+		// Check against other players first
+		if(pTuning->m_PlayerHooking)
+		{
+			float Distance = 0.0f;
+			for(int i = 0; i < MAX_CLIENTS; i++)
+			{
+				if(!s_aClients[i].m_Alive)
+					continue;
+				SCharacter *pCharCore = &s_aClients[i].m_Character;
+                if(pCharCore == this)
+                    continue;
+
+				vec2 ClosestPoint = closest_point_on_line(m_HookPos, NewPos, pCharCore->m_Pos);
+				if(distance(pCharCore->m_Pos, ClosestPoint) < PhysSize+2.0f)
+				{
+					if(m_HookedPlayer == -1 || distance(m_HookPos, pCharCore->m_Pos) < Distance)
+					{
+						m_HookState = HOOK_GRABBED;
+						m_HookedPlayer = i;
+						Distance = distance(m_HookPos, pCharCore->m_Pos);
+					}
+				}
+			}
+		}
+
+		if(m_HookState == HOOK_FLYING)
+		{
+			// check against ground
+			if(GoingToHitGround)
+			{
+				m_HookState = HOOK_GRABBED;
+			}
+			else if(GoingToRetract)
+			{
+				m_HookState = HOOK_RETRACT_START;
+			}
+
+			m_HookPos = NewPos;
+		}
+	}
+
+	if(m_HookState == HOOK_GRABBED)
+	{
+		if(m_HookedPlayer != -1)
+		{
+			SCharacter *pCharCore = &s_aClients[m_HookedPlayer].m_Character;
+			if(s_aClients[m_HookedPlayer].m_Alive)
+				m_HookPos = pCharCore->m_Pos;
+			else
+			{
+				// release hook
+				m_HookedPlayer = -1;
+				m_HookState = HOOK_RETRACTED;
+				m_HookPos = m_Pos;
+			}
+
+			// keep players hooked for a max of 1.5sec
+			//if(Server()->Tick() > hook_tick+(Server()->TickSpeed()*3)/2)
+				//release_hooked();
+		}
+
+		// don't do this hook rutine when we are hook to a player
+		if(m_HookedPlayer == -1 && distance(m_HookPos, m_Pos) > 46.0f)
+		{
+			vec2 HookVel = normalize(m_HookPos-m_Pos)*pTuning->m_HookDragAccel;
+			// the hook as more power to drag you up then down.
+			// this makes it easier to get on top of an platform
+			if(HookVel.y > 0)
+				HookVel.y *= 0.3f;
+
+			// the hook will boost it's power if the player wants to move
+			// in that direction. otherwise it will dampen everything abit
+			if((HookVel.x < 0 && m_Direction < 0) || (HookVel.x > 0 && m_Direction > 0))
+				HookVel.x *= 0.95f;
+			else
+				HookVel.x *= 0.75f;
+
+			vec2 NewVel = m_Vel+HookVel;
+
+			// check if we are under the legal limit for the hook
+			if(length(NewVel) < pTuning->m_HookDragSpeed || length(NewVel) < length(m_Vel))
+				m_Vel = NewVel; // no problem. apply
+
+		}
+
+		// release hook (max hook time is 1.25
+		m_HookTick++;
+		if(m_HookedPlayer != -1 && (m_HookTick > SERVER_TICK_SPEED+SERVER_TICK_SPEED/5 || !s_aClients[m_HookedPlayer].m_Alive))
+		{
+			m_HookedPlayer = -1;
+			m_HookState = HOOK_RETRACTED;
+			m_HookPos = m_Pos;
+		}
+	}
+
+    for(int i = 0; i < MAX_CLIENTS; i++)
+    {
+        if(!s_aClients[i].m_Alive)
+            continue;
+        SCharacter *pCharCore = &s_aClients[i].m_Character;
+        if(pCharCore == this)
+            continue;
+
+        // handle player <-> player collision
+        float Distance = distance(m_Pos, pCharCore->m_Pos);
+        vec2 Dir = normalize(m_Pos - pCharCore->m_Pos);
+        if(pTuning->m_PlayerCollision && Distance < PhysSize*1.25f && Distance > 0.0f)
+        {
+            float a = (PhysSize*1.45f - Distance);
+            float Velocity = 0.5f;
+
+            // make sure that we don't add excess force by checking the
+            // direction against the current velocity. if not zero.
+            if (length(m_Vel) > 0.0001)
+                Velocity = 1-(dot(normalize(m_Vel), Dir)+1)/2;
+
+            m_Vel += Dir*a*(Velocity*0.75f);
+            m_Vel *= 0.85f;
+        }
+
+        // handle hook influence
+        if(m_HookedPlayer == i && pTuning->m_PlayerHooking)
+        {
+            if(Distance > PhysSize*1.50f) // TODO: fix tweakable variable
+            {
+                float Accel = pTuning->m_HookDragAccel * (Distance/pTuning->m_HookLength);
+                float DragSpeed = pTuning->m_HookDragSpeed;
+
+                // add force to the hooked player
+                pCharCore->m_Vel.x = SaturatedAdd(-DragSpeed, DragSpeed, pCharCore->m_Vel.x, Accel*Dir.x*1.5f);
+                pCharCore->m_Vel.y = SaturatedAdd(-DragSpeed, DragSpeed, pCharCore->m_Vel.y, Accel*Dir.y*1.5f);
+
+                // add a little bit force to the guy who has the grip
+                m_Vel.x = SaturatedAdd(-DragSpeed, DragSpeed, m_Vel.x, -Accel*Dir.x*0.25f);
+                m_Vel.y = SaturatedAdd(-DragSpeed, DragSpeed, m_Vel.y, -Accel*Dir.y*0.25f);
+            }
+        }
+    }
+
+	// clamp the velocity to something sane
+	if(length(m_Vel) > 6000)
+		m_Vel = normalize(m_Vel) * 6000;
+
+    // move
+    float RampValue = VelocityRamp(length(m_Vel)*50, pTuning->m_VelrampStart, pTuning->m_VelrampRange, pTuning->m_VelrampCurvature);
+
+	m_Vel.x = m_Vel.x*RampValue;
+
+	vec2 NewPos = m_Pos;
+	MoveBox(&NewPos, &m_Vel, vec2(28.0f, 28.0f), 0);
+
+	m_Vel.x = m_Vel.x*(1.0f/RampValue);
+
+	if(pTuning->m_PlayerCollision)
+	{
+		// check player collision
+		float Distance = distance(m_Pos, NewPos);
+		int End = Distance+1;
+		vec2 LastPos = m_Pos;
+		for(int i = 0; i < End; i++)
+		{
+			float a = i/Distance;
+			vec2 Pos = mix(m_Pos, NewPos, a);
+			for(int p = 0; p < MAX_CLIENTS; p++)
+			{
+                if(!s_aClients[p].m_Alive)
+                    continue;
+                SCharacter *pCharCore = &s_aClients[p].m_Character;
+                if(pCharCore == this)
+                    continue;
+				float D = distance(Pos, pCharCore->m_Pos);
+				if(D < 28.0f && D > 0.0f)
+				{
+					if(a > 0.0f)
+						m_Pos = LastPos;
+					else if(distance(NewPos, pCharCore->m_Pos) > D)
+						m_Pos = NewPos;
+					return;
+				}
+			}
+			LastPos = Pos;
+		}
+	}
+
+	m_Pos = NewPos;
+}
+
 void CSugarcane::InitTwsPart()
 {
     s_LocalID = -1;
     s_pMap = nullptr;
     s_pAStar = nullptr;
-    s_NowName = "Sugarcane";
+    s_NowName = "StableSugarcane";
     s_MapWidth = 0;
     s_MapHeight = 0;
     s_TargetTeam = 0;
@@ -344,7 +594,7 @@ void CSugarcane::InitTwsPart()
 void CSugarcane::InputPrediction()
 {
     const int PredictTicks = 25;
-    vec2 NowPos(s_aClients[s_LocalID].m_Character.m_X, s_aClients[s_LocalID].m_Character.m_Y);
+    vec2 NowPos(s_aClients[s_LocalID].m_Character.m_Pos);
 
     CNetObj_PlayerInput TempInput;
     memcpy(&TempInput, &s_TickInput, sizeof(CNetObj_PlayerInput));
@@ -355,9 +605,9 @@ void CSugarcane::InputPrediction()
 
     if(s_pTarget)
     {
-        vec2 TargetPos = vec2(s_pTarget->m_Character.m_X, s_pTarget->m_Character.m_Y);
+        vec2 TargetPos = s_pTarget->m_Character.m_Pos;
         ESMapItems FrontBlock = IntersectLine(NowPos, TargetPos, nullptr, nullptr);
-        if(!(FrontBlock & ESMapItems::TILEFLAG_SOLID) && distance(s_MouseTarget, normalize(TargetPos - NowPos)) < 0.1f)
+        if(!(FrontBlock & ESMapItems::TILEFLAG_SOLID) && distance(normalize(s_MouseTarget), normalize(TargetPos - NowPos)) < 0.5f)
         {
             if(IsInfectClass(s_LocalID))
             {
@@ -379,16 +629,12 @@ void CSugarcane::InputPrediction()
         {
             vec2 Direction = normalize(s_MouseTargetTo - s_MouseTarget);
             s_MouseTarget += Direction * g_MouseMoveSpeedPerTick;
-            if(length(s_MouseTarget) < 120.0f)
-            {
-                s_MouseTarget = normalize(s_MouseTarget) * 120.0f;
-            }
         }
         return;
     }
 
     const int PhysSize = 28;
-    std::vector<std::pair<int, int>> Path = s_pAStar->findPath({NowPos.y / 32, (NowPos.x + 14.f) / 32}, 20);
+    std::vector<std::pair<int, int>> Path = s_pAStar->findPath({NowPos.y / 32, (NowPos.x + PhysSize / 2) / 32}, 20);
 
     if(Path.empty())
     {
@@ -396,10 +642,6 @@ void CSugarcane::InputPrediction()
         {
             vec2 Direction = normalize(s_MouseTargetTo - s_MouseTarget);
             s_MouseTarget += Direction * g_MouseMoveSpeedPerTick;
-            if(length(s_MouseTarget) < 120.0f)
-            {
-                s_MouseTarget = normalize(s_MouseTarget) * 120.0f;
-            }
         }
         return;
     }
@@ -412,7 +654,7 @@ void CSugarcane::InputPrediction()
     vec2 CollisionPos;
     ESMapItems FrontBlock = IntersectLine(NowPos, NowPos + normalize(s_MouseTarget) * pTuning->m_HookLength * 0.95f, nullptr, &CollisionPos);
 
-    vec2 HookPos(s_aClients[s_LocalID].m_Character.m_HookX, s_aClients[s_LocalID].m_Character.m_HookY);
+    vec2 HookPos(s_aClients[s_LocalID].m_Character.m_HookPos);
     if(s_aClients[s_LocalID].m_Character.m_HookState == HOOK_GRABBED)
     {
         s_TickInput.m_Hook = s_LastInput.m_Hook;
@@ -455,13 +697,13 @@ void CSugarcane::InputPrediction()
                     s_TickInput.m_Hook = 1;
                     s_TickInput.m_Direction = (int) -sign(s_MouseTarget.x / 64);
                 }
-                else if(!s_LastInput.m_Jump && s_aClients[s_LocalID].m_Character.m_VelY / 256.f >= 0.f)
+                else if(!s_LastInput.m_Jump && s_aClients[s_LocalID].m_Character.m_Vel.y >= 0.f)
                 {
                     s_TickInput.m_Jump = 1;
                 }
             }
         }
-        else if(!s_LastInput.m_Jump && s_aClients[s_LocalID].m_Character.m_VelY / 256.f >= 0.0f)
+        else if(!s_LastInput.m_Jump && s_aClients[s_LocalID].m_Character.m_Vel.y >= 0.0f)
         {
             s_TickInput.m_Jump = 1;
         }
@@ -472,10 +714,6 @@ void CSugarcane::InputPrediction()
         {
             vec2 Direction = normalize(s_MouseTargetTo - s_MouseTarget);
             s_MouseTarget += Direction * g_MouseMoveSpeedPerTick;
-            if(length(s_MouseTarget) < 120.0f)
-            {
-                s_MouseTarget = normalize(s_MouseTarget) * 120.0f;
-            }
         }
     }
 }
@@ -524,9 +762,11 @@ void CSugarcane::OnNewSnapshot(void *pItem, const void *pData)
             CNetObj_Character *pObj = (CNetObj_Character *) pData;
 
             int ClientID = pSnapItem->m_ID;
-
             s_aClients[ClientID].m_Alive = true;
             s_aClients[ClientID].m_Character = *pObj;
+            s_aClients[ClientID].m_Character.m_LastSnapshotTick = pObj->m_Tick;
+            for(int64_t& Tick = s_aClients[ClientID].m_Character.m_LastSnapshotTick; Tick < DDNet::s_pClient->GameTick(); Tick++)
+                s_aClients[ClientID].m_Character.Prediction();
         }
         break;
 
@@ -544,10 +784,7 @@ void CSugarcane::RecvDDNetMsg(int MsgID, void *pData)
     {
         DDNet::s_pClient->EnterGame();
 
-        CNetMsg_Cl_Say Msg;
-        Msg.m_pMessage = "你好!这里是14.1岁的甘蔗!";
-        Msg.m_Team = 0;
-        DDNet::s_pClient->SendPackMsg(&Msg, MSGFLAG_VITAL);
+        // BackTalk("有人", "你加入了一个新服务器，向其他玩家打招呼吧！", TwsTalkBack);
     }
     else if(MsgID == NETMSGTYPE_SV_CHAT)
     {
@@ -559,8 +796,10 @@ void CSugarcane::RecvDDNetMsg(int MsgID, void *pData)
         else
             log_msgf("chat", "{}: {}", pMsg->m_ClientID, pMsg->m_pMessage);
 
-        if(string(pMsg->m_pMessage).startswith(s_NowName))
-            BackTalk(pMsg->m_pMessage + 10, TwsTalkBack);
+        if(pMsg->m_ClientID >= 0 && pMsg->m_ClientID < MAX_CLIENTS && s_aClients[pMsg->m_ClientID].m_Active && string(pMsg->m_pMessage).startswith(s_NowName))
+        {
+            BackTalk(s_aClients[pMsg->m_ClientID].m_aName, pMsg->m_pMessage + s_NowName.length(), TwsTalkBack);
+        }
     }
     else if(MsgID == NETMSGTYPE_SV_BROADCAST)
     {
@@ -576,12 +815,13 @@ void CSugarcane::DDNetTick(int *pInputData)
     int OtherPlayersCount = 0;
     for(auto& Client : s_aClients)
     {
-        if(Client.m_Active && Client.m_ClientID != s_LocalID && Client.m_Team != TEAM_SPECTATORS)
+        if(!Client.m_Active)
+            continue;
+        if(Client.m_ClientID != s_LocalID && Client.m_Team != TEAM_SPECTATORS)
             OtherPlayersCount++;
 
-        if(Client.m_Active && 
-            s_LastNameChangeTime + std::chrono::seconds(3) < std::chrono::system_clock::now() && 
-            string(Client.m_aName) == string("Sugarcane") &&
+        if(s_LastNameChangeTime + std::chrono::seconds(3) < std::chrono::system_clock::now() && 
+            string(Client.m_aName) == string("StableSugarcane") &&
             Client.m_ClientID != s_LocalID &&
             string(s_aClients[s_LocalID].m_aName) != string("TestSugarcane"))
         {
@@ -619,25 +859,18 @@ void CSugarcane::DDNetTick(int *pInputData)
         if(s_LastTeamChangeTime + std::chrono::seconds(3) < std::chrono::system_clock::now())
         {
             // use elder sister
-            CNetMsg_Cl_ChangeInfo Msg;
-			Msg.m_pName = "TestSugarcane";
-			Msg.m_pClan = "Mid·Night";
-			Msg.m_Country = 156;
-			Msg.m_pSkin = "santa_limekitty";
-			Msg.m_UseCustomColor = 1;
-			Msg.m_ColorBody = 0;
-			Msg.m_ColorFeet = 0;
+            CNetMsg_Cl_SetTeam Msg;
+			Msg.m_Team = s_TargetTeam;
             DDNet::s_pClient->SendPackMsg(&Msg, MSGFLAG_VITAL);
 
-            s_LastNameChangeTime = std::chrono::system_clock::now();
-            s_NowName = "TestSugarcane";
+            s_LastTeamChangeTime = std::chrono::system_clock::now();
             log_msg("sugarcane/tws", "send switch team msg");
         }
     }
 
     if(s_aClients[s_LocalID].m_Alive)
     {
-        vec2 NowPos(s_aClients[s_LocalID].m_Character.m_X, s_aClients[s_LocalID].m_Character.m_Y);
+        vec2 NowPos(s_aClients[s_LocalID].m_Character.m_Pos);
 
         // find target
         SClient *pLastTarget = s_pTarget;
@@ -674,7 +907,7 @@ void CSugarcane::DDNetTick(int *pInputData)
         {
             if(Client.m_Active && Client.m_Alive && Client.m_ClientID != s_LocalID)
             {
-                vec2 Pos = vec2(Client.m_Character.m_X, Client.m_Character.m_Y);
+                vec2 Pos = vec2(Client.m_Character.m_Pos);
                 float Distance = distance(Pos, NowPos);
                 if(SelfInfect && !IsOtherTeam(Client.m_ClientID))
                 {
@@ -702,7 +935,7 @@ void CSugarcane::DDNetTick(int *pInputData)
 
         if(pMoveTarget)
         {
-            vec2 Pos = vec2(pMoveTarget->m_Character.m_X, pMoveTarget->m_Character.m_Y);
+            vec2 Pos = pMoveTarget->m_Character.m_Pos;
             if(s_pAStar)
                 delete s_pAStar;
 
@@ -713,7 +946,7 @@ void CSugarcane::DDNetTick(int *pInputData)
 
         if(s_pTarget)
         {
-            s_MouseTargetTo = vec2(s_pTarget->m_Character.m_X, s_pTarget->m_Character.m_Y) - NowPos;
+            s_MouseTargetTo = s_pTarget->m_Character.m_Pos - NowPos;
         }
     }
 
@@ -735,8 +968,13 @@ void CSugarcane::StartSnap()
 {
     for(auto& Client : s_aClients)
     {
-        Client.m_Active = false;
-        Client.m_Alive = false;
+        if(!Client.m_Active)
+            continue;
+        if(!DDNet::s_pClient->SnapFindItem(IClient::SNAP_PREV, NETOBJTYPE_CHARACTER, Client.m_ClientID) || 
+            !DDNet::s_pClient->SnapFindItem(IClient::SNAP_PREV, NETOBJTYPE_PLAYERINFO, Client.m_ClientID))
+            Client.m_Alive = false;
+        if(!DDNet::s_pClient->SnapFindItem(IClient::SNAP_PREV, NETOBJTYPE_PLAYERINFO, Client.m_ClientID))
+            Client.m_Active = false;
     }
     s_vLasers.clear();
 }

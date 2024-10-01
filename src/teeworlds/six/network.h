@@ -1,26 +1,25 @@
 /* (c) Magnus Auvinen. See licence.txt in the root of the distribution for more information. */
 /* If you are missing that file, acquire a complete release at teeworlds.com.                */
-#ifndef TEEWORLDS_SIX__NETWORK_H
-#define TEEWORLDS_SIX__NETWORK_H
+#ifndef ENGINE_SHARED_NETWORK_H
+#define ENGINE_SHARED_NETWORK_H
+
+#include "system.h"
 
 #include "ringbuffer.h"
 #include "huffman.h"
 
-#include "math.h"
-
-#include "message.h"
-
 /*
 
 CURRENT:
-	packet header: 3 bytes
-		unsigned char flags_ack; // 4bit flags, 4bit ack
+	packet header: 7 bytes
+		unsigned char flags_ack; // 6bit flags, 2bit ack
 		unsigned char ack; // 8 bit ack
 		unsigned char num_chunks; // 8 bit chunks
+		(unsigned char token[4];) // 32 bit token if flags contains NET_PACKETFLAG_TOKEN
 
-		(unsigned char padding[3])	// 24 bit extra incase it's a connection less packet
-									// this is to make sure that it's compatible with the
-									// old protocol
+		(unsigned char padding[3];) // 24 bit extra in case it's a connection less packet
+		                            // this is to make sure that it's compatible with the
+		                            // old protocol
 
 	chunk header: 2-3 bytes
 		unsigned char flags_size; // 2bit flags, 6 bit size
@@ -40,7 +39,9 @@ enum
 	NETSTATE_ONLINE,
 
 	NETBANTYPE_SOFT=1,
-	NETBANTYPE_DROP=2
+	NETBANTYPE_DROP=2,
+
+	NETCREATE_FLAG_RANDOMPORT=1
 };
 
 
@@ -49,9 +50,10 @@ enum
 	NET_VERSION = 2,
 
 	NET_MAX_PACKETSIZE = 1400,
-	NET_MAX_PAYLOAD = NET_MAX_PACKETSIZE-6,
+	NET_MAX_PAYLOAD = NET_MAX_PACKETSIZE-10,
 	NET_MAX_CHUNKHEADERSIZE = 5,
-	NET_PACKETHEADERSIZE = 3,
+	NET_PACKETHEADERSIZE = 7,
+	NET_PACKETHEADERSIZE_WITHOUT_TOKEN = 3,
 	NET_MAX_CLIENTS = 64,
 	NET_MAX_CONSOLE_CLIENTS = 4,
 	NET_MAX_SEQUENCE = 1<<10,
@@ -59,14 +61,15 @@ enum
 
 	NET_CONNSTATE_OFFLINE=0,
 	NET_CONNSTATE_CONNECT=1,
-	NET_CONNSTATE_PENDING=2,
 	NET_CONNSTATE_ONLINE=3,
 	NET_CONNSTATE_ERROR=4,
 
-	NET_PACKETFLAG_CONTROL=1,
-	NET_PACKETFLAG_CONNLESS=2,
-	NET_PACKETFLAG_RESEND=4,
-	NET_PACKETFLAG_COMPRESSION=8,
+	NET_PACKETFLAG_UNUSED=1<<0,
+	NET_PACKETFLAG_TOKEN=1<<1,
+	NET_PACKETFLAG_CONTROL=1<<2,
+	NET_PACKETFLAG_CONNLESS=1<<3,
+	NET_PACKETFLAG_RESEND=1<<4,
+	NET_PACKETFLAG_COMPRESSION=1<<5,
 
 	NET_CHUNKFLAG_VITAL=1,
 	NET_CHUNKFLAG_RESEND=2,
@@ -74,30 +77,19 @@ enum
 	NET_CTRLMSG_KEEPALIVE=0,
 	NET_CTRLMSG_CONNECT=1,
 	NET_CTRLMSG_CONNECTACCEPT=2,
-	NET_CTRLMSG_ACCEPT=3,
 	NET_CTRLMSG_CLOSE=4,
 
 	NET_CONN_BUFFERSIZE=1024*32,
 
+	NET_COMPATIBILITY_SEQ=2,
+
 	NET_ENUM_TERMINATOR
 };
 
-typedef int SECURITY_TOKEN;
-
-SECURITY_TOKEN ToSecurityToken(unsigned char* pData);
-
-static const unsigned char SECURITY_TOKEN_MAGIC[] = {'T', 'K', 'E', 'N'};
-
-enum
-{
-	NET_SECURITY_TOKEN_UNKNOWN = -1,
-	NET_SECURITY_TOKEN_UNSUPPORTED = 0,
-};
 
 typedef int (*NETFUNC_DELCLIENT)(int ClientID, const char* pReason, void *pUser);
-typedef int (*NETFUNC_NEWCLIENT)(int ClientID, void *pUser);
-typedef int (*NETFUNC_NEWCLIENT_NOAUTH)(int ClientID, bool Reset, void *pUser);
-typedef int (*NETFUNC_CLIENTREJOIN)(int ClientID, void *pUser);
+typedef int (*NETFUNC_NEWCLIENT)(int ClientID, bool Legacy, void *pUser);
+typedef int (*NETFUNC_NEWCLIENT_CON)(int ClientID, void *pUser);
 
 struct CNetChunk
 {
@@ -140,6 +132,7 @@ public:
 	int m_Ack;
 	int m_NumChunks;
 	int m_DataSize;
+	unsigned m_Token;
 	unsigned char m_aChunkData[NET_MAX_PAYLOAD];
 };
 
@@ -152,15 +145,15 @@ class CNetConnection
 	friend class CNetRecvUnpacker;
 private:
 	unsigned short m_Sequence;
+	bool m_UnknownAck; // ack not known due to the backward compatibility hack
 	unsigned short m_Ack;
 	unsigned short m_PeerAck;
 	unsigned m_State;
 
-	int m_Token;
-	SECURITY_TOKEN m_SecurityToken;
+	bool m_UseToken;
+	unsigned m_Token;
 	int m_RemoteClosed;
 	bool m_BlockCloseMsg;
-	bool m_UnknownSeq;
 
 	TStaticRingBuffer<CNetChunkResend, NET_CONN_BUFFERSIZE> m_Buffer;
 
@@ -177,6 +170,7 @@ private:
 	NETSTATS m_Stats;
 
 	//
+	void Reset();
 	void ResetStats();
 	void SetError(const char *pString);
 	void AckChunks(int Ack);
@@ -185,22 +179,19 @@ private:
 	void SendControl(int ControlMsg, const void *pExtra, int ExtraSize);
 	void ResendChunk(CNetChunkResend *pResend);
 	void Resend();
-
-	bool HasSecurityToken;
+	void SendConnect();
 
 public:
-	bool m_TimeoutProtected;
-	bool m_TimeoutSituation;
-
-	void Reset(bool Rejoin=false);
 	void Init(NETSOCKET Socket, bool BlockCloseMsg);
 	int Connect(NETADDR *pAddr);
+	int Accept(NETADDR *pAddr, unsigned Token);
+	int AcceptLegacy(NETADDR *pAddr);
 	void Disconnect(const char *pReason);
 
 	int Update();
 	int Flush();
 
-	int Feed(CNetPacketConstruct *pPacket, NETADDR *pAddr, SECURITY_TOKEN SecurityToken = NET_SECURITY_TOKEN_UNSUPPORTED);
+	int Feed(CNetPacketConstruct *pPacket, NETADDR *pAddr);
 	int QueueChunk(int Flags, int DataSize, const void *pData);
 
 	const char *ErrorString();
@@ -216,14 +207,36 @@ public:
 	int64 ConnectTime() const { return m_LastUpdateTime; }
 
 	int AckSequence() const { return m_Ack; }
-	int SeqSequence() const { return m_Sequence; }
-	int SecurityToken() const { return m_SecurityToken; }
-	void SetTimedOut(const NETADDR *pAddr, int Sequence, int Ack, SECURITY_TOKEN SecurityToken);
+};
 
-	// anti spoof
-	void DirectInit(NETADDR &Addr, SECURITY_TOKEN SecurityToken);
-	void SetUnknownSeq() { m_UnknownSeq = true; }
-	void SetSequence(int Sequence) { m_Sequence = Sequence; }
+class CConsoleNetConnection
+{
+private:
+	int m_State;
+
+	NETADDR m_PeerAddr;
+	NETSOCKET m_Socket;
+
+	char m_aBuffer[NET_MAX_PACKETSIZE];
+	int m_BufferOffset;
+
+	char m_aErrorString[256];
+
+	bool m_LineEndingDetected;
+	char m_aLineEnding[3];
+
+public:
+	void Init(NETSOCKET Socket, const NETADDR *pAddr);
+	void Disconnect(const char *pReason);
+
+	int State() const { return m_State; }
+	const NETADDR *PeerAddress() const { return &m_PeerAddr; }
+	const char *ErrorString() const { return m_aErrorString; }
+
+	void Reset();
+	int Update();
+	int Send(const char *pLine);
+	int Recv(char *pLine, int MaxLength);
 };
 
 class CNetRecvUnpacker
@@ -244,14 +257,14 @@ public:
 	int FetchChunk(CNetChunk *pChunk);
 };
 
-
 // client side
 class CNetClient
 {
+	NETADDR m_ServerAddr;
 	CNetConnection m_Connection;
 	CNetRecvUnpacker m_RecvUnpacker;
-public:
 	NETSOCKET m_Socket;
+public:
 	// openness
 	bool Open(NETADDR BindAddr, int Flags);
 	int Close();
@@ -275,11 +288,7 @@ public:
 	int State();
 	int GotProblems();
 	const char *ErrorString();
-
-	bool SecurityTokenUnknown() { return m_Connection.SecurityToken() == NET_SECURITY_TOKEN_UNKNOWN; }
 };
-
-
 
 // TODO: both, fix these. This feels like a junk class for stuff that doesn't fit anywere
 class CNetBase
@@ -294,11 +303,9 @@ public:
 	static int Compress(const void *pData, int DataSize, void *pOutput, int OutputSize);
 	static int Decompress(const void *pData, int DataSize, void *pOutput, int OutputSize);
 
-	static void SendControlMsg(NETSOCKET Socket, NETADDR *pAddr, int Ack, int ControlMsg, const void *pExtra, int ExtraSize, SECURITY_TOKEN SecurityToken);
+	static void SendControlMsg(NETSOCKET Socket, NETADDR *pAddr, int Ack, bool UseToken, unsigned Token, int ControlMsg, const void *pExtra, int ExtraSize);
 	static void SendPacketConnless(NETSOCKET Socket, NETADDR *pAddr, const void *pData, int DataSize);
-	static void SendPacket(NETSOCKET Socket, NETADDR *pAddr, CNetPacketConstruct *pPacket, SECURITY_TOKEN SecurityToken);
-
-
+	static void SendPacket(NETSOCKET Socket, NETADDR *pAddr, CNetPacketConstruct *pPacket);
 	static int UnpackPacket(unsigned char *pBuffer, int Size, CNetPacketConstruct *pPacket);
 
 	// The backroom is ack-NET_MAX_SEQUENCE/2. Used for knowing if we acked a packet or not

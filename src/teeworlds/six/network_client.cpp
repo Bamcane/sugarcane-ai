@@ -1,5 +1,6 @@
 /* (c) Magnus Auvinen. See licence.txt in the root of the distribution for more information. */
 /* If you are missing that file, acquire a complete release at teeworlds.com.                */
+
 #include "system.h"
 #include "network.h"
 
@@ -85,7 +86,9 @@ int CNetClient::Recv(CNetChunk *pChunk)
 			{
 				if(m_Connection.State() != NET_CONNSTATE_OFFLINE && m_Connection.State() != NET_CONNSTATE_ERROR && net_addr_comp(m_Connection.PeerAddress(), &Addr) == 0
 					&& m_Connection.Feed(&m_RecvUnpacker.m_Data, &Addr))
+				{
 					m_RecvUnpacker.Start(&Addr, &m_Connection, 0);
+				}
 			}
 		}
 	}

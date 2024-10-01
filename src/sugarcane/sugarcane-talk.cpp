@@ -1,6 +1,7 @@
 #include <include/base.h>
+#include <include/external/ollama.hpp>
+
 #include <base/storage.h>
-#include <rapidfuzz/fuzz.hpp>
 
 #include "sugarcane.h"
 
@@ -8,91 +9,39 @@
 #include <thread>
 #include <vector>
 
-struct STalkData
-{
-    std::vector<string> m_Froms;
-    std::vector<string> m_Responses;
-};
-
-static std::vector<STalkData> s_TalkDatas;
 void CSugarcane::InitTalkPart()
 {
-    m_TalkPartInit = false;
-
-    std::thread([&]()
+    try
     {
-        IFileReader *pFileReader = Storage()->ReadFile("data", "talk", "data");
-        if(!pFileReader)
-        {
-            log_msg("sugarcane/talk", "initialization failed");
-            return;
-        }
-
-        string Line;
-        STalkData TempData;
-        while(pFileReader->ReadLine(Line))
-        {
-            if(Line.startswith("=="))
-            {
-                string& From = TempData.m_Froms.emplace_back(string(Line.substr(3)));
-            }
-            else if(Line.startswith("##"))
-            {
-                string& Response = TempData.m_Responses.emplace_back(string(Line.substr(3)));
-            }
-            else if(Line.startswith("$$$$"))
-            {
-                if(!TempData.m_Froms.empty() && !TempData.m_Responses.empty())
-                    s_TalkDatas.push_back(TempData);
-                TempData.m_Froms.clear();
-                TempData.m_Responses.clear();
-            }
-        }
-
-        pFileReader->Close();
-
-        if(!TempData.m_Froms.empty() && !TempData.m_Responses.empty())
-            s_TalkDatas.push_back(TempData);
-
-        m_TalkPartInit = true;
-        log_msg("sugarcane/talk", "initialization success");
-    }).detach();
+    // preload
+    ollama::load_model("sugarcane-ai");
+    }
+    catch(std::exception &e)
+    {
+        log_msgf("sugarcane/talk", "preload error: {}", e.what());
+    }
 }
 
-static std::random_device s_RandomDevice;
-static std::default_random_engine s_RandomEngine(s_RandomDevice());
-int random_int(int Min, int Max)
+void CSugarcane::BackTalk(const char *pFrom, const char *pMessage, TALKBACK_FUNCTION Function)
 {
-    std::uniform_int_distribution<int> Distribution(Min, Max);
-    return Distribution(s_RandomEngine);
-}
-
-void CSugarcane::BackTalk(const char *pFrom, TALKBACK_FUNCTION Function)
-{
-    if(!m_TalkPartInit)
-        return;
-    STalkData *pBestComp = nullptr;
-    double BestScore = 0.0f;
-    for(auto& Data : s_TalkDatas)
+    std::thread([Function](string From, string Message) -> void
     {
-        for(auto& DataFrom : Data.m_Froms)
+        try
         {
-            double Score = rapidfuzz::fuzz::token_sort_ratio(pFrom, DataFrom.c_str());
-            if(Score > BestScore)
+            ollama::message Request("user", std::format("{}和你说:\"{}\"，你该怎么回答", From.c_str(), Message.c_str()));
+            ollama::response Response = ollama::chat("sugarcane-ai", Request);
+            if(Response.has_error())
             {
-                pBestComp = &Data;
-                BestScore = Score;
+                Function("请告诉甘箨我的AI出问题啦!QAQ!");
+            }
+            else
+            {
+                Function(Response.as_simple_string().c_str());
             }
         }
-    }
-
-    if(BestScore < 64.0f)
-    {
-        Function("诶qwwwww, 显然我的CPU没法处理....");
-        return;
-    }
-    if(pBestComp->m_Responses.empty())
-        return;
-
-    Function(pBestComp->m_Responses[random_int(0, pBestComp->m_Responses.size() - 1)]);
+        catch(std::exception &e)
+        {
+            Function(std::format("请告诉甘箨: \"{}\" QAQ!", e.what()).c_str());
+        }
+    }, pFrom, pMessage).detach();
 }
