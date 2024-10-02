@@ -157,7 +157,7 @@ static vec2 s_GoToPos;
 static vec2 s_MouseTarget;
 static vec2 s_MouseTargetTo;
 static SClient *s_pTarget;
-constexpr float g_MouseMoveSpeedPerTick = 4.0f;
+constexpr float g_MouseMoveSpeedPerTick = 2.0f;
 
 static std::vector<std::vector<int>> s_MapGrid;
 static std::vector<std::vector<int>> s_MapGridWithEntity;
