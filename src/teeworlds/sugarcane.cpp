@@ -765,8 +765,9 @@ void CSugarcane::OnNewSnapshot(void *pItem, const void *pData)
             s_aClients[ClientID].m_Alive = true;
             s_aClients[ClientID].m_Character = *pObj;
             s_aClients[ClientID].m_Character.m_LastSnapshotTick = pObj->m_Tick;
-            for(int64_t& Tick = s_aClients[ClientID].m_Character.m_LastSnapshotTick; Tick < DDNet::s_pClient->GameTick(); Tick++)
-                s_aClients[ClientID].m_Character.Prediction();
+            if(pObj->m_Tick) 
+                for(int64_t& Tick = s_aClients[ClientID].m_Character.m_LastSnapshotTick; Tick < DDNet::s_pClient->GameTick(); Tick++)
+                    s_aClients[ClientID].m_Character.Prediction();
         }
         break;
 
