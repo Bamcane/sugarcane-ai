@@ -50,6 +50,7 @@ float VelocityRamp(float Value, float Start, float Range, float Curvature)
 struct SCharacter
 {
     int64_t m_LastSnapshotTick;
+    int64_t m_Tick;
     vec2 m_Pos;
     vec2 m_Vel;
     vec2 m_HookPos;
@@ -73,7 +74,7 @@ struct SCharacter
     SCharacter& operator=(const CNetObj_Character& Source)
     {
         m_Pos = vec2((float) Source.m_X, (float) Source.m_Y);
-        m_Vel = vec2((float) Source.m_VelX / 256.0f, (float) Source.m_Y / 256.0f);
+        m_Vel = vec2((float) Source.m_VelX / 256.0f, (float) Source.m_VelY / 256.0f);
         m_HookPos = vec2((float) Source.m_HookX, (float) Source.m_HookY);
         m_HookDir = vec2((float) Source.m_HookDx / 256.0f, (float) Source.m_HookDy / 256.0f);
         m_Angle = Source.m_Angle;
@@ -171,7 +172,7 @@ static std::chrono::system_clock::time_point s_LastNameChangeTime = std::chrono:
 static std::chrono::system_clock::time_point s_LastTeamChangeTime = std::chrono::system_clock::now();
 static std::chrono::system_clock::time_point s_LastInputTime = std::chrono::system_clock::now();
 
-static const char *s_apInfectClasses[] = {"Hunter", "Smoker", "Spider", "Ghoul", "Undead", "Witch", "Voodoo", "Slug", "Boomer", "Bat", "Ghost", "Freezer", "Nightmare", "Slime", ""};
+static const char *s_apInfectClasses[] = {"Hunter", "Smoker", "Spider", "Ghoul", "Undead", "Witch", "Voodoo", "Slug", "Boomer", "Bat", "Ghost", "Freezer", "Nightmare", "Slime"};
 static bool IsInfectClass(const char *pClassName)
 {
     for(auto& Infect : s_apInfectClasses)
@@ -605,7 +606,7 @@ void CSugarcane::InputPrediction()
 
     if(s_pTarget)
     {
-        vec2 TargetPos = s_pTarget->m_Character.m_Pos;
+        vec2 TargetPos = s_pTarget->m_Character.m_Pos + s_pTarget->m_Character.m_Vel;
         ESMapItems FrontBlock = IntersectLine(NowPos, TargetPos, nullptr, nullptr);
         if(!(FrontBlock & ESMapItems::TILEFLAG_SOLID) && distance(normalize(s_MouseTarget), normalize(TargetPos - NowPos)) < 0.5f)
         {
@@ -659,7 +660,7 @@ void CSugarcane::InputPrediction()
     {
         s_TickInput.m_Hook = s_LastInput.m_Hook;
         s_TickInput.m_Direction = s_LastInput.m_Direction;
-        if(distance(HookPos / 32, CollisionPos / 32) > 4.f || distance(HookPos, NowPos) < 18.f)
+        if(DDNet::s_pClient->GameTick() - s_aClients[s_LocalID].m_Character.m_HookTick > SERVER_TICK_SPEED || distance(HookPos / 32, CollisionPos / 32) > 4.f || distance(HookPos, NowPos) < 18.f)
         {
             s_TickInput.m_Hook = 0;
             return;
@@ -764,9 +765,9 @@ void CSugarcane::OnNewSnapshot(void *pItem, const void *pData)
             int ClientID = pSnapItem->m_ID;
             s_aClients[ClientID].m_Alive = true;
             s_aClients[ClientID].m_Character = *pObj;
-            s_aClients[ClientID].m_Character.m_LastSnapshotTick = pObj->m_Tick;
+            s_aClients[ClientID].m_Character.m_Tick = s_aClients[ClientID].m_Character.m_LastSnapshotTick = pObj->m_Tick;
             if(pObj->m_Tick) 
-                for(int64_t& Tick = s_aClients[ClientID].m_Character.m_LastSnapshotTick; Tick < DDNet::s_pClient->GameTick(); Tick++)
+                for(int64_t& Tick = s_aClients[ClientID].m_Character.m_Tick; Tick < DDNet::s_pClient->GameTick(); Tick++)
                     s_aClients[ClientID].m_Character.Prediction();
         }
         break;
@@ -785,6 +786,7 @@ void CSugarcane::RecvDDNetMsg(int MsgID, void *pData)
     {
         DDNet::s_pClient->EnterGame();
 
+        s_LastTeamChangeTime = std::chrono::system_clock::now();
         // BackTalk("有人", "你加入了一个新服务器，向其他玩家打招呼吧！", TwsTalkBack);
     }
     else if(MsgID == NETMSGTYPE_SV_CHAT)
@@ -857,7 +859,7 @@ void CSugarcane::DDNetTick(int *pInputData)
 
     if(s_TargetTeam != s_aClients[s_LocalID].m_Team)
     {
-        if(s_LastTeamChangeTime + std::chrono::seconds(3) < std::chrono::system_clock::now())
+        if(s_LastTeamChangeTime + std::chrono::seconds(5) < std::chrono::system_clock::now())
         {
             // use elder sister
             CNetMsg_Cl_SetTeam Msg;
@@ -910,14 +912,9 @@ void CSugarcane::DDNetTick(int *pInputData)
             {
                 vec2 Pos = vec2(Client.m_Character.m_Pos);
                 float Distance = distance(Pos, NowPos);
-                if(SelfInfect && !IsOtherTeam(Client.m_ClientID))
-                {
-                    Distance += (!pLastTarget || (pLastTarget && pLastTarget->m_ClientID != Client.m_ClientID)) ? 800.0f : 500.f;
-                }
-                else if(IsOtherTeam(Client.m_ClientID))
-                {
-                    Distance -= 200.0f;
-                }
+                Distance -= (IsOtherTeam(Client.m_ClientID) ? DDNet::s_pClient->GameTick() - Client.m_Character.m_LastSnapshotTick : Client.m_Character.m_LastSnapshotTick - DDNet::s_pClient->GameTick()) * 30.0f;
+                if(IsOtherTeam(Client.m_ClientID))
+                    Distance -= 480.0f;
 
                 if(Distance < ClosetDistance)
                 {
