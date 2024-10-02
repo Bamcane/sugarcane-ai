@@ -157,7 +157,7 @@ static vec2 s_GoToPos;
 static vec2 s_MouseTarget;
 static vec2 s_MouseTargetTo;
 static SClient *s_pTarget;
-constexpr float g_MouseMoveSpeedPerTick = 30.0f;
+constexpr float g_MouseMoveSpeedPerTick = 4.0f;
 
 static std::vector<std::vector<int>> s_MapGrid;
 static std::vector<std::vector<int>> s_MapGridWithEntity;
@@ -626,7 +626,7 @@ void CSugarcane::InputPrediction()
 
     if(!s_pAStar)
     {
-        if(distance(s_MouseTargetTo, s_MouseTarget) > g_MouseMoveSpeedPerTick)
+        if(distance(s_MouseTargetTo, s_MouseTarget) > g_MouseMoveSpeedPerTick * 3)
         {
             vec2 Direction = normalize(s_MouseTargetTo - s_MouseTarget);
             s_MouseTarget += Direction * g_MouseMoveSpeedPerTick;
@@ -639,7 +639,7 @@ void CSugarcane::InputPrediction()
 
     if(Path.empty())
     {
-        if(distance(s_MouseTargetTo, s_MouseTarget) > g_MouseMoveSpeedPerTick)
+        if(distance(s_MouseTargetTo, s_MouseTarget) > g_MouseMoveSpeedPerTick * 3)
         {
             vec2 Direction = normalize(s_MouseTargetTo - s_MouseTarget);
             s_MouseTarget += Direction * g_MouseMoveSpeedPerTick;
@@ -711,7 +711,7 @@ void CSugarcane::InputPrediction()
     }
 
     {
-        if(distance(s_MouseTargetTo, s_MouseTarget) > g_MouseMoveSpeedPerTick)
+        if(distance(s_MouseTargetTo, s_MouseTarget) > g_MouseMoveSpeedPerTick * 3)
         {
             vec2 Direction = normalize(s_MouseTargetTo - s_MouseTarget);
             s_MouseTarget += Direction * g_MouseMoveSpeedPerTick;
