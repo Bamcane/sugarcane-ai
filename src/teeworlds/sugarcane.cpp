@@ -157,7 +157,7 @@ static vec2 s_GoToPos;
 static vec2 s_MouseTarget;
 static vec2 s_MouseTargetTo;
 static SClient *s_pTarget;
-constexpr float g_MouseMoveSpeedPerTick = 2.0f;
+constexpr float g_MouseMoveSpeedPerTick = 8.0f;
 
 static std::vector<std::vector<int>> s_MapGrid;
 static std::vector<std::vector<int>> s_MapGridWithEntity;
@@ -594,7 +594,7 @@ void CSugarcane::InitTwsPart()
 
 void CSugarcane::InputPrediction()
 {
-    const int PredictTicks = 25;
+    const int PhysSize = 28;
     vec2 NowPos(s_aClients[s_LocalID].m_Character.m_Pos);
 
     CNetObj_PlayerInput TempInput;
@@ -608,7 +608,7 @@ void CSugarcane::InputPrediction()
     {
         vec2 TargetPos = s_pTarget->m_Character.m_Pos + s_pTarget->m_Character.m_Vel;
         ESMapItems FrontBlock = IntersectLine(NowPos, TargetPos, nullptr, nullptr);
-        if(!(FrontBlock & ESMapItems::TILEFLAG_SOLID) && distance(normalize(s_MouseTarget), normalize(TargetPos - NowPos)) < 0.5f)
+        if(!(FrontBlock & ESMapItems::TILEFLAG_SOLID) && distance(normalize(s_MouseTarget), normalize(TargetPos - NowPos)) < 0.2f)
         {
             if(IsInfectClass(s_LocalID))
             {
@@ -622,6 +622,22 @@ void CSugarcane::InputPrediction()
                 s_TickInput.m_Fire = !s_LastInput.m_Fire;
             }
         }
+        if(IsInfectClass(s_LocalID))
+        {
+            if(s_aClients[s_LocalID].m_Character.m_HookState == HOOK_GRABBED && s_aClients[s_LocalID].m_Character.m_HookedPlayer == s_pTarget->m_ClientID)
+            {
+                s_TickInput.m_Hook = 1;
+            }
+            float Distance = distance(TargetPos, closest_point_on_line(NowPos + normalize(s_MouseTarget), NowPos + normalize(s_MouseTarget) * pTuning->m_HookLength * 0.95f, TargetPos));
+            if(Distance < PhysSize)
+            {
+                s_TickInput.m_Hook = 1;
+            }
+            if(s_aClients[s_LocalID].m_Character.m_HookState == HOOK_GRABBED && s_aClients[s_LocalID].m_Character.m_HookedPlayer != s_pTarget->m_ClientID)
+            {
+                s_TickInput.m_Hook = 0;
+            }
+        }
     }
 
     if(!s_pAStar)
@@ -630,11 +646,11 @@ void CSugarcane::InputPrediction()
         {
             vec2 Direction = normalize(s_MouseTargetTo - s_MouseTarget);
             s_MouseTarget += Direction * g_MouseMoveSpeedPerTick;
+            s_MouseTarget = normalize(s_MouseTarget) * clamp(length(s_MouseTarget), 0.f, 400.f);
         }
         return;
     }
 
-    const int PhysSize = 28;
     std::vector<std::pair<int, int>> Path = s_pAStar->findPath({NowPos.y / 32, (NowPos.x + PhysSize / 2) / 32}, 20);
 
     if(Path.empty())
@@ -643,6 +659,7 @@ void CSugarcane::InputPrediction()
         {
             vec2 Direction = normalize(s_MouseTargetTo - s_MouseTarget);
             s_MouseTarget += Direction * g_MouseMoveSpeedPerTick;
+            s_MouseTarget = normalize(s_MouseTarget) * clamp(length(s_MouseTarget), 0.f, 400.f);
         }
         return;
     }
@@ -651,12 +668,18 @@ void CSugarcane::InputPrediction()
     int MoveY = Path[0].first;
     s_TickInput.m_Direction = MoveX;
 
+	bool Grounded = false;
+	if(CheckPoint(NowPos.x + PhysSize / 2, NowPos.y + PhysSize / 2 + 5))
+		Grounded = true;
+	if(CheckPoint(NowPos.x - PhysSize / 2, NowPos.y + PhysSize / 2 + 5))
+		Grounded = true;
+
     // search hook
     vec2 CollisionPos;
     ESMapItems FrontBlock = IntersectLine(NowPos, NowPos + normalize(s_MouseTarget) * pTuning->m_HookLength * 0.95f, nullptr, &CollisionPos);
 
     vec2 HookPos(s_aClients[s_LocalID].m_Character.m_HookPos);
-    if(s_aClients[s_LocalID].m_Character.m_HookState == HOOK_GRABBED)
+    if(s_aClients[s_LocalID].m_Character.m_HookState == HOOK_GRABBED && s_aClients[s_LocalID].m_Character.m_HookedPlayer == -1)
     {
         s_TickInput.m_Hook = s_LastInput.m_Hook;
         s_TickInput.m_Direction = s_LastInput.m_Direction;
@@ -685,28 +708,25 @@ void CSugarcane::InputPrediction()
         {
             s_MouseTargetTo = CheckPos + vec2(0.f, -48.f) - NowPos;
         }
-        if((s_aClients[s_LocalID].m_Character.m_Jumped & 1 || 
-            s_aClients[s_LocalID].m_Character.m_Jumped & 3 || 
-            (CheckPos.y + 96.f < NowPos.y && CheckPos.y + 192.f > NowPos.y)) && 
-            FrontBlock & ESMapItems::TILEFLAG_SOLID && 
-            !(FrontBlock & ESMapItems::TILEFLAG_UNHOOKABLE))
+        if(s_aClients[s_LocalID].m_Character.m_Vel.y > -pTuning->m_GroundJumpImpulse / 2.f >= 0.0f)
         {
-            if(s_aClients[s_LocalID].m_Character.m_HookState == HOOK_IDLE)
+            if(Grounded)
             {
-                if(abs(CollisionPos.y - NowPos.y) > 16.f)
-                {
-                    s_TickInput.m_Hook = 1;
-                    s_TickInput.m_Direction = (int) -sign(s_MouseTarget.x / 64);
-                }
-                else if(!s_LastInput.m_Jump && s_aClients[s_LocalID].m_Character.m_Vel.y >= 0.f)
-                {
-                    s_TickInput.m_Jump = 1;
-                }
+                s_TickInput.m_Jump = 1;
+                s_aClients[s_LocalID].m_Character.m_Vel.y = -pTuning->m_GroundJumpImpulse;
+                s_aClients[s_LocalID].m_Character.m_Jumped |= 1;
+            }
+            else if(!(s_aClients[s_LocalID].m_Character.m_Jumped & 2))
+            {
+                s_TickInput.m_Jump = 1;
+                s_aClients[s_LocalID].m_Character.m_Vel.y = -pTuning->m_AirJumpImpulse;
+                s_aClients[s_LocalID].m_Character.m_Jumped |= 3;
             }
         }
-        else if(!s_LastInput.m_Jump && s_aClients[s_LocalID].m_Character.m_Vel.y >= 0.0f)
+        if(!s_TickInput.m_Jump)
         {
-            s_TickInput.m_Jump = 1;
+            s_TickInput.m_Hook = 1;
+            s_TickInput.m_Direction = (int) -sign(s_MouseTargetTo.x);
         }
     }
 
@@ -715,6 +735,7 @@ void CSugarcane::InputPrediction()
         {
             vec2 Direction = normalize(s_MouseTargetTo - s_MouseTarget);
             s_MouseTarget += Direction * g_MouseMoveSpeedPerTick;
+            s_MouseTarget = normalize(s_MouseTarget) * clamp(length(s_MouseTarget), 0.f, 400.f);
         }
     }
 }
