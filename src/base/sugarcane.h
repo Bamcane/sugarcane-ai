@@ -7,6 +7,7 @@ public:
     virtual void Init(class IStorage *pStorage) = 0;
     virtual void Run() = 0;
 
+    virtual const char *GetName() = 0;
     /* teeworlds */
     virtual void OnNewSnapshot(void *pItem, const void *pData) = 0;
     virtual void RecvDDNetMsg(int MsgID, void *pData) = 0;

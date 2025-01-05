@@ -28,6 +28,7 @@ public:
 
     void Run() override;
 
+    const char *GetName() override;
     /* teeworlds */
     void OnNewSnapshot(void *pItem, const void *pData) override;
     void RecvDDNetMsg(int MsgID, void *pData) override;

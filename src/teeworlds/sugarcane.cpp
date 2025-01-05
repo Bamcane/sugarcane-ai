@@ -580,12 +580,17 @@ void SCharacter::Prediction()
 	m_Pos = NewPos;
 }
 
+const char *CSugarcane::GetName()
+{
+    return s_NowName;
+}
+
 void CSugarcane::InitTwsPart()
 {
     s_LocalID = -1;
     s_pMap = nullptr;
     s_pAStar = nullptr;
-    s_NowName = "StableSugarcane";
+    s_NowName = "稳蔗";
     s_MapWidth = 0;
     s_MapHeight = 0;
     s_TargetTeam = 0;
@@ -808,7 +813,6 @@ void CSugarcane::RecvDDNetMsg(int MsgID, void *pData)
         DDNet::s_pClient->EnterGame();
 
         s_LastTeamChangeTime = std::chrono::system_clock::now();
-        // BackTalk("有人", "你加入了一个新服务器，向其他玩家打招呼吧！", TwsTalkBack);
     }
     else if(MsgID == NETMSGTYPE_SV_CHAT)
     {
@@ -844,14 +848,15 @@ void CSugarcane::DDNetTick(int *pInputData)
         if(Client.m_ClientID != s_LocalID && Client.m_Team != TEAM_SPECTATORS)
             OtherPlayersCount++;
 
+        continue;
         if(s_LastNameChangeTime + std::chrono::seconds(3) < std::chrono::system_clock::now() && 
-            string(Client.m_aName) == string("StableSugarcane") &&
+            string(Client.m_aName) == string("稳蔗") &&
             Client.m_ClientID != s_LocalID &&
-            string(s_aClients[s_LocalID].m_aName) != string("TestSugarcane"))
+            string(s_aClients[s_LocalID].m_aName) != string("谴蔗"))
         {
             // use elder sister
             CNetMsg_Cl_ChangeInfo Msg;
-			Msg.m_pName = "TestSugarcane";
+			Msg.m_pName = "谴蔗";
 			Msg.m_pClan = "Mid·Night";
 			Msg.m_Country = 156;
 			Msg.m_pSkin = "santa_limekitty";
@@ -861,7 +866,7 @@ void CSugarcane::DDNetTick(int *pInputData)
             DDNet::s_pClient->SendPackMsg(&Msg, MSGFLAG_VITAL);
 
             s_LastNameChangeTime = std::chrono::system_clock::now();
-            s_NowName = "TestSugarcane";
+            s_NowName = "谴蔗";
             log_msg("sugarcane/tws", "send rename msg");
         }
     }

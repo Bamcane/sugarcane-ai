@@ -9,12 +9,14 @@
 #include <thread>
 #include <vector>
 
+static Ollama s_Server("http://192.168.31.11:11434");
+
 void CSugarcane::InitTalkPart()
 {
     try
     {
-    // preload
-    ollama::load_model("sugarcane-ai");
+        // preload
+        s_Server.load_model("sugarcane-ai");
     }
     catch(std::exception &e)
     {
@@ -28,15 +30,16 @@ void CSugarcane::BackTalk(const char *pFrom, const char *pMessage, TALKBACK_FUNC
     {
         try
         {
-            ollama::message Request("user", std::format("{}和你说:\"{}\"，你该怎么回答", From.c_str(), Message.c_str()));
-            ollama::response Response = ollama::chat("sugarcane-ai", Request);
+            ollama::message Request("user", std::format("Game-Chat|{}: {}", From.c_str(), Message.c_str()));
+            ollama::response Response = s_Server.chat("sugarcane-ai", Request);
             if(Response.has_error())
             {
                 Function("请告诉甘箨我的AI出问题啦!QAQ!");
             }
             else
             {
-                Function(Response.as_simple_string().c_str());
+                if(Response.as_simple_string().starts_with("/say "))
+                    Function(Response.as_simple_string().substr(strlen("/say")).c_str());
             }
         }
         catch(std::exception &e)
