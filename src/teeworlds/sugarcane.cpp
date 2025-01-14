@@ -820,9 +820,9 @@ void CSugarcane::RecvDDNetMsg(int MsgID, void *pData)
         else
             log_msgf("chat", "{}: {}", pMsg->m_ClientID, pMsg->m_pMessage);
 
-        if(pMsg->m_ClientID >= 0 && pMsg->m_ClientID < MAX_CLIENTS && s_aClients[pMsg->m_ClientID].m_Active && string(pMsg->m_pMessage).startswith(s_aClients[pMsg->m_ClientID].m_aName))
+        if(pMsg->m_ClientID >= 0 && pMsg->m_ClientID < MAX_CLIENTS && s_aClients[pMsg->m_ClientID].m_Active && string(pMsg->m_pMessage).startswith(s_aClients[s_LocalID].m_aName))
         {
-            BackTalk(s_aClients[pMsg->m_ClientID].m_aName, pMsg->m_pMessage + str_length(s_aClients[pMsg->m_ClientID].m_aName), TwsTalkBack);
+            BackTalk(s_aClients[pMsg->m_ClientID].m_aName, pMsg->m_pMessage + str_length(s_aClients[s_LocalID].m_aName), TwsTalkBack);
         }
     }
     else if(MsgID == NETMSGTYPE_SV_BROADCAST)

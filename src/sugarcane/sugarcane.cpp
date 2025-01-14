@@ -31,12 +31,12 @@ void CSugarcane::Init(IStorage *pStorage, int argc, const char **argv)
 
 	{
 		bool FindInformation = false;
-		if(argc)
+		if(argc > 1)
 		{
 			auto Iter = std::find_if(std::begin(s_aInformations), std::end(s_aInformations), 
 				[argv](const SInformation& Info) -> bool
 				{
-					return strcmp(Info.m_aID, (const char *) argv[0]) == 0;
+					return strcmp(Info.m_aID, (const char *) argv[1]) == 0;
 				});
 			if(Iter != std::end(s_aInformations))
 			{
