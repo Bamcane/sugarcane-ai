@@ -5,10 +5,6 @@
 
 #include "sugarcane.h"
 
-#include <random>
-#include <thread>
-#include <vector>
-
 static Ollama s_Server("http://192.168.31.11:11434");
 
 void CSugarcane::InitTalkPart()
@@ -16,7 +12,7 @@ void CSugarcane::InitTalkPart()
     try
     {
         // preload
-        s_Server.load_model("sugarcane-ai");
+        s_Server.load_model(m_pInformation->m_aChatModel);
     }
     catch(std::exception &e)
     {
@@ -26,15 +22,16 @@ void CSugarcane::InitTalkPart()
 
 void CSugarcane::BackTalk(const char *pFrom, const char *pMessage, TALKBACK_FUNCTION Function)
 {
-    std::thread([Function](string From, string Message) -> void
+    SInformation *pInformation = m_pInformation;
+    std::thread([Function, pInformation](string From, string Message) -> void
     {
         try
         {
             ollama::message Request("user", std::format("Game-Chat|{}: {}", From.c_str(), Message.c_str()));
-            ollama::response Response = s_Server.chat("sugarcane-ai", Request);
+            ollama::response Response = s_Server.chat(pInformation->m_aChatModel, Request);
             if(Response.has_error())
             {
-                Function("请告诉甘箨我的AI出问题啦!QAQ!");
+                Function(pInformation->m_ErrorMessage[0]);
             }
             else
             {
@@ -44,7 +41,8 @@ void CSugarcane::BackTalk(const char *pFrom, const char *pMessage, TALKBACK_FUNC
         }
         catch(std::exception &e)
         {
-            Function(std::format("请告诉甘箨: \"{}\" QAQ!", e.what()).c_str());
+            const char *pErrorMessage = e.what();
+            Function(std::vformat(std::string_view(pInformation->m_ErrorMessage[1]), std::make_format_args(pErrorMessage)).c_str());
         }
     }, pFrom, pMessage).detach();
 }

@@ -5,30 +5,32 @@
 
 class CSugarcane : public ISugarcane
 {
+private:
     IStorage *m_pStorage;
 
     void DoInput(int *pInputData);
-private:
+
     /* talk part */
     typedef void (*TALKBACK_FUNCTION)(string Talk);
 
     void InitTalkPart();
     void BackTalk(const char *pFrom, const char *pMessage, TALKBACK_FUNCTION Function);
 
-private:
     /* teeworlds */
     void InitTwsPart();
     void InputPrediction();
 
     static void TwsTalkBack(string Talk);
+
+    SInformation *m_pInformation;
 public:
+    SInformation *Information() { return m_pInformation; }
     IStorage *Storage() { return m_pStorage; }
 
-    void Init(IStorage *pStorage) override;
+    void Init(IStorage *pStorage, int argc, const char **argv) override;
 
     void Run() override;
 
-    const char *GetName() override;
     /* teeworlds */
     void OnNewSnapshot(void *pItem, const void *pData) override;
     void RecvDDNetMsg(int MsgID, void *pData) override;

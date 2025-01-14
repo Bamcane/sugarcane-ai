@@ -25,6 +25,11 @@ struct std::formatter<string>
     }
 };
 
+inline int random_int(int min, int max)
+{
+    return rand() % (max - min) + min;
+}
+
 #define log_msg(from, msg) \
     std::cout<< std::format("[{:x}][{}] ", time(0), from) << msg << std::endl
 

@@ -15,10 +15,8 @@ FILE(GLOB_RECURSE AI_CODES CONFIGURE_DEPENDS
 
 set(CMAKE_CXX_STANDARD 20)
 
-find_package(rapidfuzz REQUIRED)
 find_package(ZLIB REQUIRED)
 add_executable(${PROJECT_NAME} ${BASE_CODES} ${INCLUDE_CODES} ${TEEWORLDS_MAP_CODES} ${TEEWORLDS_CODES} ${AI_CODES})
 
 target_include_directories(${PROJECT_NAME} PRIVATE ${PROJECT_BINARY_DIR}/src)
-target_link_libraries(${PROJECT_NAME} PRIVATE rapidfuzz::rapidfuzz)
 target_link_libraries(${PROJECT_NAME} PRIVATE ZLIB::ZLIB)

@@ -496,8 +496,8 @@ void CClient::ProcessServerPacket(CNetChunk *pPacket)
 		else if((pPacket->m_Flags&NET_CHUNKFLAG_VITAL) != 0 && Msg == NETMSG_CON_READY)
 		{
 			CNetMsg_Cl_StartInfo Msg;
-			Msg.m_pName = m_pSugarcane->GetName();
-			Msg.m_pClan = "Mid·Night";
+			Msg.m_pName = m_pSugarcane->Information()->m_aGameName;
+			Msg.m_pClan = m_pSugarcane->Information()->m_aClan;
 			Msg.m_Country = 156;
 			Msg.m_pSkin = "santa_bluekitty";
 			Msg.m_UseCustomColor = 1;

@@ -36,7 +36,7 @@ public:
         clear();
     }
 
-    void copy(const char *potherstr)
+    inline void copy(const char *potherstr)
     {
         if(!potherstr)
             return;
@@ -51,7 +51,7 @@ public:
         str[strsize - 1] = '\0';
     }
 
-    void append(const char *pappend)
+    inline void append(const char *pappend)
     {
         if(!pappend)
             return;
@@ -66,14 +66,14 @@ public:
         str[strsize - 1] = '\0';
     }
 
-    void moveto(void *pDest)
+    inline void moveto(void *pDest)
     {
         memmove(pDest, str, strsize);
         str = nullptr;
         strsize = 0;
     }
 
-    void clear()
+    inline void clear()
     {
         if(str)
             free(str);
@@ -81,55 +81,55 @@ public:
         strsize = 0;
     }
 
-    const char* substr(size_t pos) const
+    inline const char* substr(size_t pos) const
     {
         return str + pos;
     }
 
-    const char* substr(size_t pos)
+    inline const char* substr(size_t pos)
     {
         return str + pos;
     }
 
-    bool startswith(string test) const
+    inline bool startswith(string test) const
     {
         if(test.length() > length())
             return false;
         return memcmp(str, test.str, test.length()) == 0;
     }
 
-    bool startswith(string test)
+    inline bool startswith(string test)
     {
         if(test.length() > length())
             return false;
         return memcmp(str, test.str, test.length()) == 0;
     }
 
-    bool endswith(string test) const
+    inline bool endswith(string test) const
     {
         if(test.length() > length())
             return false;
         return memcmp(str + length() - test.length(), test.str, test.length()) == 0;
     }
 
-    bool endswith(string test)
+    inline bool endswith(string test)
     {
         if(test.length() > length())
             return false;
         return memcmp(str + length() - test.length(), test.str, test.length()) == 0;
     }
 
-    const char *c_str() const
+    inline const char *c_str() const
     {
         return str;
     }
 
-    const char *c_str()
+    inline const char *c_str()
     {
         return str;
     }
 
-    size_t length() const
+    inline size_t length() const
     {
         if(strsize == 0)
             return 0;
@@ -137,7 +137,7 @@ public:
         return strsize - 1;
     }
 
-    size_t length()
+    inline size_t length()
     {
         if(strsize == 0)
             return 0;
@@ -145,24 +145,24 @@ public:
         return strsize - 1;
     }
 
-    size_t size() const
+    inline size_t size() const
     {
         return strsize;
     }
 
-    size_t size()
+    inline size_t size()
     {
         return strsize;
     }
 
-    bool operator==(const string& other) const
+    inline bool operator==(const string& other) const
     {
         if(length() != other.length())
             return false;
         return memcmp(str, other.str, length()) == 0;
     }
 
-    bool operator<(const string& other) const
+    inline bool operator<(const string& other) const
     {
         if(length() < other.length())
             return true;
@@ -171,35 +171,29 @@ public:
         return memcmp(str, other.str, length()) < 0;
     }
 
-    string& operator=(const string& other)
+    inline string& operator=(const string& other)
     {
         copy(other);
         return *this;
     }
 
-    string& operator+=(const string& other)
+    inline string& operator+=(const string& other)
     {
         append(other);
         return *this;
     }
 
-    string& operator+(const string& other)
-    {
-        append(other);
-        return *this;
-    }
-
-    operator const char*() const
+    inline operator const char*() const
     {
         return c_str();
     }
 
-    operator const char*()
+    inline operator const char*()
     {
         return c_str();
     }
 
-    char operator[](int index) const
+    inline char operator[](int index) const
     {
         if(index >= strsize)
             return '\0';
@@ -207,7 +201,7 @@ public:
         return str[index];
     }
 
-    char operator[](int index)
+    inline char operator[](int index)
     {
         if(index >= strsize)
             return '\0';

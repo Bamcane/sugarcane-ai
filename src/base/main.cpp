@@ -9,7 +9,7 @@ int main(int argc, const char **argv)
     ISugarcane *pSugarcane = CreateSugarcane();
 
     pStorage->Init();
-    pSugarcane->Init(pStorage);
+    pSugarcane->Init(pStorage, argc, argv);
 
     log_msg("main", "start running...");
     pSugarcane->Run();

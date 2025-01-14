@@ -151,13 +151,13 @@ static std::vector<SLaser> s_vLasers;
 
 static int s_LocalID;
 static int s_TargetTeam;
-static string s_NowName;
 
 static vec2 s_GoToPos;
 static vec2 s_MouseTarget;
 static vec2 s_MouseTargetTo;
 static SClient *s_pTarget;
-constexpr float g_MouseMoveSpeedPerTick = 8.0f;
+constexpr float g_MaxMouseMoveSpeedPerTick = 40.0f;
+constexpr float g_MinMouseMoveSpeedPerTick = 8.0f;
 
 static std::vector<std::vector<int>> s_MapGrid;
 static std::vector<std::vector<int>> s_MapGridWithEntity;
@@ -168,7 +168,6 @@ static int s_MapHeight;
 
 static CNetObj_PlayerInput s_LastInput = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 static CNetObj_PlayerInput s_TickInput = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-static std::chrono::system_clock::time_point s_LastNameChangeTime = std::chrono::system_clock::now();
 static std::chrono::system_clock::time_point s_LastTeamChangeTime = std::chrono::system_clock::now();
 static std::chrono::system_clock::time_point s_LastInputTime = std::chrono::system_clock::now();
 
@@ -580,17 +579,11 @@ void SCharacter::Prediction()
 	m_Pos = NewPos;
 }
 
-const char *CSugarcane::GetName()
-{
-    return s_NowName;
-}
-
 void CSugarcane::InitTwsPart()
 {
     s_LocalID = -1;
     s_pMap = nullptr;
     s_pAStar = nullptr;
-    s_NowName = "稳蔗";
     s_MapWidth = 0;
     s_MapHeight = 0;
     s_TargetTeam = 0;
@@ -647,10 +640,11 @@ void CSugarcane::InputPrediction()
 
     if(!s_pAStar)
     {
-        if(distance(s_MouseTargetTo, s_MouseTarget) > g_MouseMoveSpeedPerTick * 3)
+        int MouseSpeed = random_int(g_MinMouseMoveSpeedPerTick, g_MaxMouseMoveSpeedPerTick);
+        if(distance(s_MouseTargetTo, s_MouseTarget) > MouseSpeed * 3)
         {
             vec2 Direction = normalize(s_MouseTargetTo - s_MouseTarget);
-            s_MouseTarget += Direction * g_MouseMoveSpeedPerTick;
+            s_MouseTarget += Direction * MouseSpeed;
             s_MouseTarget = normalize(s_MouseTarget) * clamp(length(s_MouseTarget), 0.f, 400.f);
         }
         return;
@@ -660,10 +654,11 @@ void CSugarcane::InputPrediction()
 
     if(Path.empty())
     {
-        if(distance(s_MouseTargetTo, s_MouseTarget) > g_MouseMoveSpeedPerTick * 3)
+        int MouseSpeed = random_int(g_MinMouseMoveSpeedPerTick, g_MaxMouseMoveSpeedPerTick);
+        if(distance(s_MouseTargetTo, s_MouseTarget) > MouseSpeed * 3)
         {
             vec2 Direction = normalize(s_MouseTargetTo - s_MouseTarget);
-            s_MouseTarget += Direction * g_MouseMoveSpeedPerTick;
+            s_MouseTarget += Direction * MouseSpeed;
             s_MouseTarget = normalize(s_MouseTarget) * clamp(length(s_MouseTarget), 0.f, 400.f);
         }
         return;
@@ -736,10 +731,11 @@ void CSugarcane::InputPrediction()
     }
 
     {
-        if(distance(s_MouseTargetTo, s_MouseTarget) > g_MouseMoveSpeedPerTick * 3)
+        int MouseSpeed = random_int(g_MinMouseMoveSpeedPerTick, g_MaxMouseMoveSpeedPerTick);
+        if(distance(s_MouseTargetTo, s_MouseTarget) > MouseSpeed * 3)
         {
             vec2 Direction = normalize(s_MouseTargetTo - s_MouseTarget);
-            s_MouseTarget += Direction * g_MouseMoveSpeedPerTick;
+            s_MouseTarget += Direction * MouseSpeed;
             s_MouseTarget = normalize(s_MouseTarget) * clamp(length(s_MouseTarget), 0.f, 400.f);
         }
     }
@@ -824,9 +820,9 @@ void CSugarcane::RecvDDNetMsg(int MsgID, void *pData)
         else
             log_msgf("chat", "{}: {}", pMsg->m_ClientID, pMsg->m_pMessage);
 
-        if(pMsg->m_ClientID >= 0 && pMsg->m_ClientID < MAX_CLIENTS && s_aClients[pMsg->m_ClientID].m_Active && string(pMsg->m_pMessage).startswith(s_NowName))
+        if(pMsg->m_ClientID >= 0 && pMsg->m_ClientID < MAX_CLIENTS && s_aClients[pMsg->m_ClientID].m_Active && string(pMsg->m_pMessage).startswith(s_aClients[pMsg->m_ClientID].m_aName))
         {
-            BackTalk(s_aClients[pMsg->m_ClientID].m_aName, pMsg->m_pMessage + s_NowName.length(), TwsTalkBack);
+            BackTalk(s_aClients[pMsg->m_ClientID].m_aName, pMsg->m_pMessage + str_length(s_aClients[pMsg->m_ClientID].m_aName), TwsTalkBack);
         }
     }
     else if(MsgID == NETMSGTYPE_SV_BROADCAST)
@@ -847,28 +843,6 @@ void CSugarcane::DDNetTick(int *pInputData)
             continue;
         if(Client.m_ClientID != s_LocalID && Client.m_Team != TEAM_SPECTATORS)
             OtherPlayersCount++;
-
-        continue;
-        if(s_LastNameChangeTime + std::chrono::seconds(3) < std::chrono::system_clock::now() && 
-            string(Client.m_aName) == string("稳蔗") &&
-            Client.m_ClientID != s_LocalID &&
-            string(s_aClients[s_LocalID].m_aName) != string("谴蔗"))
-        {
-            // use elder sister
-            CNetMsg_Cl_ChangeInfo Msg;
-			Msg.m_pName = "谴蔗";
-			Msg.m_pClan = "Mid·Night";
-			Msg.m_Country = 156;
-			Msg.m_pSkin = "santa_limekitty";
-			Msg.m_UseCustomColor = 1;
-			Msg.m_ColorBody = 0;
-			Msg.m_ColorFeet = 0;
-            DDNet::s_pClient->SendPackMsg(&Msg, MSGFLAG_VITAL);
-
-            s_LastNameChangeTime = std::chrono::system_clock::now();
-            s_NowName = "谴蔗";
-            log_msg("sugarcane/tws", "send rename msg");
-        }
     }
 
     if(OtherPlayersCount)

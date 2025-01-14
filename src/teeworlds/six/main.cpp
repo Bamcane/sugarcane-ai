@@ -63,14 +63,12 @@ namespace DDNet
 		pKernel->RegisterInterface(pClient);
 		pClient->RegisterInterfaces();
 
-		IEngine *pEngine = CreateEngine("DDNet");
+		IEngine *pEngine = CreateEngine("Teeworlds");
 		pEngine->Init();
 		pClient->InitInterfaces();
 
 		str_copy(pClient->m_aCmdConnect, Address, sizeof(pClient->m_aCmdConnect));
 		pClient->Run();
-
-		return;
 	}
 
 	void Disconnect()
