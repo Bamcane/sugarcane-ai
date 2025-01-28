@@ -95,6 +95,45 @@ struct SCharacter
     }
 };
 
+struct SMapDetail
+{
+    std::vector<vec2> m_vStrongholds;
+
+    void SaveStronghold(vec2 NewStronghold)
+    {
+        for(auto& Stronghold : m_vStrongholds)
+        {
+            float Distance = distance(Stronghold, NewStronghold);
+            if(Distance < 480.f)
+            {
+                return;
+            }
+        }
+        m_vStrongholds.push_back(NewStronghold);
+    }
+
+    void FindNearestStronghold(vec2 Pos, vec2** pFindPos)
+    {
+        float MinDistance = 32000.f;
+
+        *pFindPos = nullptr;
+        for(auto& Stronghold : m_vStrongholds)
+        {
+            float Distance = distance(Stronghold, Pos);
+            if(Distance < MinDistance)
+            {
+                *pFindPos = &Stronghold;
+                MinDistance = Distance;
+            }
+        }
+    }
+
+    void Reset()
+    {
+        m_vStrongholds.clear();
+    }
+};
+
 struct SClient
 {
     SClient()
@@ -111,6 +150,8 @@ struct SClient
     int m_ClientID;
     int m_Score;
     int m_Team;
+
+    std::chrono::system_clock::time_point s_LastCheckTime;
 
     SCharacter m_Character;
 
@@ -146,12 +187,16 @@ enum
 	HOOK_GRABBED,
 };
 
-static std::array<SClient, MAX_CLIENTS> s_aClients;
+static SClient s_aClients[MAX_CLIENTS];
 static std::vector<SLaser> s_vLasers;
+static SMapDetail s_MapDetail;
 
 static int s_LocalID;
 static int s_TargetTeam;
 
+static bool s_FindStronghold;
+
+static vec2 s_StrongholdPos;
 static vec2 s_GoToPos;
 static vec2 s_MouseTarget;
 static vec2 s_MouseTargetTo;
@@ -170,6 +215,7 @@ static CNetObj_PlayerInput s_LastInput = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 static CNetObj_PlayerInput s_TickInput = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 static std::chrono::system_clock::time_point s_LastTeamChangeTime = std::chrono::system_clock::now();
 static std::chrono::system_clock::time_point s_LastInputTime = std::chrono::system_clock::now();
+static std::chrono::system_clock::time_point s_LastStrongholdFindTime = std::chrono::system_clock::now();
 
 static const char *s_apInfectClasses[] = {"Hunter", "Smoker", "Spider", "Ghoul", "Undead", "Witch", "Voodoo", "Slug", "Boomer", "Bat", "Ghost", "Freezer", "Nightmare", "Slime"};
 static bool IsInfectClass(const char *pClassName)
@@ -587,7 +633,23 @@ void CSugarcane::InitTwsPart()
     s_MapWidth = 0;
     s_MapHeight = 0;
     s_TargetTeam = 0;
+    s_pTarget = nullptr;
     s_MouseTarget = vec2(0.f, 0.f);
+    s_MouseTargetTo = vec2(0.f, 0.f);
+}
+
+static float GetWeaponDistance(int Weapon)
+{
+    switch(Weapon)
+    {
+        case WEAPON_HAMMER: return 64.f;
+        case WEAPON_GUN: return 640.f;
+        case WEAPON_SHOTGUN: return 240.f;
+        case WEAPON_GRENADE: return 320.f;
+        case WEAPON_RIFLE: return 640.f;
+        case WEAPON_NINJA: return 192.f;
+    }
+    return 64.0f;
 }
 
 void CSugarcane::InputPrediction()
@@ -602,151 +664,137 @@ void CSugarcane::InputPrediction()
     s_TickInput.m_TargetX = (int) s_MouseTarget.x;
     s_TickInput.m_TargetY = (int) s_MouseTarget.y;
 
-    if(s_pTarget)
+    auto MoveCursor = [&]()
     {
-        vec2 TargetPos = s_pTarget->m_Character.m_Pos + s_pTarget->m_Character.m_Vel;
-        ESMapItems FrontBlock = IntersectLine(NowPos, TargetPos, nullptr, nullptr);
-        if(!(FrontBlock & ESMapItems::TILEFLAG_SOLID) && distance(normalize(s_MouseTarget), normalize(TargetPos - NowPos)) < 0.2f)
+        int MouseSpeed = random_int(g_MinMouseMoveSpeedPerTick, g_MaxMouseMoveSpeedPerTick);
+        if(distance(s_MouseTargetTo, s_MouseTarget) > MouseSpeed * 3)
         {
-            if(IsInfectClass(s_LocalID))
+            vec2 Direction = normalize(s_MouseTargetTo - s_MouseTarget);
+            s_MouseTarget += Direction * MouseSpeed;
+            s_MouseTarget = normalize(s_MouseTarget) * clamp(length(s_MouseTarget), 0.f, 400.f);
+        }
+        return;
+    };
+
+    bool TargetHook = false;
+    auto Move = [&]()
+    {
+        if(!s_pAStar)
+        {
+            return;
+        }
+
+        std::vector<std::pair<int, int>> Path = s_pAStar->findPath({NowPos.y / 32, (NowPos.x + PhysSize / 2) / 32}, 20);
+
+        if(Path.empty())
+        {
+            return;
+        }
+
+        int MoveX = Path[0].second;
+        int MoveY = Path[0].first;
+        s_TickInput.m_Direction = MoveX;
+
+        bool Grounded = false;
+        if(CheckPoint(NowPos.x + PhysSize / 2, NowPos.y + PhysSize / 2 + 5))
+            Grounded = true;
+        if(CheckPoint(NowPos.x - PhysSize / 2, NowPos.y + PhysSize / 2 + 5))
+            Grounded = true;
+
+        if(MoveY < 0)
+        {
+            if(s_aClients[s_LocalID].m_Character.m_Vel.y > -pTuning->m_GroundJumpImpulse / 2.f)
             {
-                if(distance(NowPos, TargetPos) < 96.0f)
+                if(Grounded)
                 {
-                    s_TickInput.m_Fire = !s_LastInput.m_Fire;
+                    s_TickInput.m_Jump = 1;
+                    s_aClients[s_LocalID].m_Character.m_Vel.y = -pTuning->m_GroundJumpImpulse;
+                    s_aClients[s_LocalID].m_Character.m_Jumped |= 1;
+                }
+                else if(!(s_aClients[s_LocalID].m_Character.m_Jumped & 2))
+                {
+                    s_TickInput.m_Jump = 1;
+                    s_aClients[s_LocalID].m_Character.m_Vel.y = -pTuning->m_AirJumpImpulse;
+                    s_aClients[s_LocalID].m_Character.m_Jumped |= 3;
                 }
             }
-            else
+            if(!s_TickInput.m_Jump)
+            {
+                TargetHook = true;
+                s_TickInput.m_Hook = 1;
+                s_TickInput.m_Direction = (int) -sign(s_MouseTargetTo.x);
+            }
+        }
+    };
+
+    Move();
+
+    if(s_pTarget && s_pTarget->m_Character.m_Emote != EMOTE_PAIN)
+    {
+        int ActiveWeapon = s_aClients[s_LocalID].m_Character.m_Weapon;
+        if(!TargetHook)
+        {
+            s_MouseTargetTo = s_pTarget->m_Character.m_Pos - NowPos;
+            if(distance(s_pTarget->m_Character.m_Pos, NowPos) < GetWeaponDistance(ActiveWeapon) && distance(normalize(s_MouseTarget), normalize(s_MouseTargetTo)) < 0.5f)
             {
                 s_TickInput.m_Fire = !s_LastInput.m_Fire;
             }
         }
-        if(IsInfectClass(s_LocalID))
-        {
-            if(s_aClients[s_LocalID].m_Character.m_HookState == HOOK_GRABBED && s_aClients[s_LocalID].m_Character.m_HookedPlayer == s_pTarget->m_ClientID)
-            {
-                s_TickInput.m_Hook = 1;
-            }
-            float Distance = distance(TargetPos, closest_point_on_line(NowPos + normalize(s_MouseTarget), NowPos + normalize(s_MouseTarget) * pTuning->m_HookLength * 0.95f, TargetPos));
-            if(Distance < PhysSize)
-            {
-                s_TickInput.m_Hook = 1;
-            }
-            if(s_aClients[s_LocalID].m_Character.m_HookState == HOOK_GRABBED && s_aClients[s_LocalID].m_Character.m_HookedPlayer != s_pTarget->m_ClientID)
-            {
-                s_TickInput.m_Hook = 0;
-            }
-        }
     }
-
-    if(!s_pAStar)
-    {
-        int MouseSpeed = random_int(g_MinMouseMoveSpeedPerTick, g_MaxMouseMoveSpeedPerTick);
-        if(distance(s_MouseTargetTo, s_MouseTarget) > MouseSpeed * 3)
-        {
-            vec2 Direction = normalize(s_MouseTargetTo - s_MouseTarget);
-            s_MouseTarget += Direction * MouseSpeed;
-            s_MouseTarget = normalize(s_MouseTarget) * clamp(length(s_MouseTarget), 0.f, 400.f);
-        }
-        return;
-    }
-
-    std::vector<std::pair<int, int>> Path = s_pAStar->findPath({NowPos.y / 32, (NowPos.x + PhysSize / 2) / 32}, 20);
-
-    if(Path.empty())
-    {
-        int MouseSpeed = random_int(g_MinMouseMoveSpeedPerTick, g_MaxMouseMoveSpeedPerTick);
-        if(distance(s_MouseTargetTo, s_MouseTarget) > MouseSpeed * 3)
-        {
-            vec2 Direction = normalize(s_MouseTargetTo - s_MouseTarget);
-            s_MouseTarget += Direction * MouseSpeed;
-            s_MouseTarget = normalize(s_MouseTarget) * clamp(length(s_MouseTarget), 0.f, 400.f);
-        }
-        return;
-    }
-
-    int MoveX = Path[0].second;
-    int MoveY = Path[0].first;
-    s_TickInput.m_Direction = MoveX;
-
-	bool Grounded = false;
-	if(CheckPoint(NowPos.x + PhysSize / 2, NowPos.y + PhysSize / 2 + 5))
-		Grounded = true;
-	if(CheckPoint(NowPos.x - PhysSize / 2, NowPos.y + PhysSize / 2 + 5))
-		Grounded = true;
-
-    // search hook
-    vec2 CollisionPos;
-    ESMapItems FrontBlock = IntersectLine(NowPos, NowPos + normalize(s_MouseTarget) * pTuning->m_HookLength * 0.95f, nullptr, &CollisionPos);
-
-    vec2 HookPos(s_aClients[s_LocalID].m_Character.m_HookPos);
-    if(s_aClients[s_LocalID].m_Character.m_HookState == HOOK_GRABBED && s_aClients[s_LocalID].m_Character.m_HookedPlayer == -1)
-    {
-        s_TickInput.m_Hook = s_LastInput.m_Hook;
-        s_TickInput.m_Direction = s_LastInput.m_Direction;
-        if(DDNet::s_pClient->GameTick() - s_aClients[s_LocalID].m_Character.m_HookTick > SERVER_TICK_SPEED || distance(HookPos / 32, CollisionPos / 32) > 4.f || distance(HookPos, NowPos) < 18.f)
-        {
-            s_TickInput.m_Hook = 0;
-            return;
-        }
-    }
-
-    if(MoveY < 0)
-    {
-        bool FoundPos = false;
-        vec2 CheckPos = NowPos;
-
-        for(auto& Move : Path)
-        {
-            CheckPos += vec2(Move.second , Move.first) * 32.f;
-            if(IsGrounded(CheckPos) && abs(CheckPos.y - NowPos.y) > 48.0f)
-            {
-                FoundPos = true;
-                break;
-            }
-        }
-        if(FoundPos)
-        {
-            s_MouseTargetTo = CheckPos + vec2(0.f, -48.f) - NowPos;
-        }
-        if(s_aClients[s_LocalID].m_Character.m_Vel.y > -pTuning->m_GroundJumpImpulse / 2.f >= 0.0f)
-        {
-            if(Grounded)
-            {
-                s_TickInput.m_Jump = 1;
-                s_aClients[s_LocalID].m_Character.m_Vel.y = -pTuning->m_GroundJumpImpulse;
-                s_aClients[s_LocalID].m_Character.m_Jumped |= 1;
-            }
-            else if(!(s_aClients[s_LocalID].m_Character.m_Jumped & 2))
-            {
-                s_TickInput.m_Jump = 1;
-                s_aClients[s_LocalID].m_Character.m_Vel.y = -pTuning->m_AirJumpImpulse;
-                s_aClients[s_LocalID].m_Character.m_Jumped |= 3;
-            }
-        }
-        if(!s_TickInput.m_Jump)
-        {
-            s_TickInput.m_Hook = 1;
-            s_TickInput.m_Direction = (int) -sign(s_MouseTargetTo.x);
-        }
-    }
-
-    {
-        int MouseSpeed = random_int(g_MinMouseMoveSpeedPerTick, g_MaxMouseMoveSpeedPerTick);
-        if(distance(s_MouseTargetTo, s_MouseTarget) > MouseSpeed * 3)
-        {
-            vec2 Direction = normalize(s_MouseTargetTo - s_MouseTarget);
-            s_MouseTarget += Direction * MouseSpeed;
-            s_MouseTarget = normalize(s_MouseTarget) * clamp(length(s_MouseTarget), 0.f, 400.f);
-        }
-    }
+    MoveCursor();
 }
 
-void CSugarcane::TwsTalkBack(string Talk)
+std::vector<std::string> devide_command(const std::string& input)
 {
-    CNetMsg_Cl_Say Msg;
-    Msg.m_pMessage = Talk.c_str();
-    Msg.m_Team = 0;
-    DDNet::s_pClient->SendPackMsg(&Msg, MSGFLAG_VITAL);
+    std::vector<std::string> vBuffers;
+    size_t last_pos = 0;
+    size_t pos = input.find("[;;;]", 0);
+    if(pos == std::string::npos)
+        pos = input.size();
+    do
+    {
+        vBuffers.push_back(std::string(input.substr(last_pos, pos - last_pos)));
+        last_pos = pos + str_length("[;;;]");
+    }
+    while((pos = input.find("[;;;]", pos + str_length("[;;;]"))) != std::string::npos);
+    return vBuffers;
+}
+
+void CSugarcane::TwsResponseBack(string Response)
+{
+    auto vCommands = devide_command(Response.c_str());
+    auto Function = [](string Response)
+    {
+        log_msgf("sugarcane/game", "调用指令'{}'", Response.c_str());
+        if(Response.startswith("/say "))
+        {
+            CNetMsg_Cl_Say Msg;
+            Msg.m_pMessage = Response.substr(strlen("/say"));
+            Msg.m_Team = 0;
+            DDNet::s_pClient->SendPackMsg(&Msg, MSGFLAG_VITAL);
+        }
+        else if(Response.startswith("/target "))
+        {
+            string NewTarget = Response.substr(8);
+            log_msgf("sugarcane/game", "搜索目标'{}'", NewTarget.c_str());
+            for(auto& Client : s_aClients)
+            {
+                if(!Client.m_Alive)
+                    continue;
+                if(NewTarget == string(Client.m_aName))
+                {
+                    s_pTarget = &Client;
+                    log_msgf("sugarcane/game", "目标切换到'{}'", Client.m_aName);
+                    break;
+                }
+            }
+        }
+    };
+
+    for(auto& Command : vCommands)
+    {
+        Function(Command.c_str());
+    }
 }
 
 void CSugarcane::OnNewSnapshot(void *pItem, const void *pData)
@@ -777,6 +825,8 @@ void CSugarcane::OnNewSnapshot(void *pItem, const void *pData)
             s_aClients[ClientID].m_Score = pObj->m_Score;
 
             s_aClients[ClientID].m_Active = true;
+            if(!DDNet::s_pClient->SnapFindItem(IClient::SNAP_PREV, NETOBJTYPE_PLAYERINFO, ClientID))
+                s_aClients[ClientID].s_LastCheckTime = std::chrono::system_clock::now();
         }
         break;
 
@@ -785,12 +835,12 @@ void CSugarcane::OnNewSnapshot(void *pItem, const void *pData)
             CNetObj_Character *pObj = (CNetObj_Character *) pData;
 
             int ClientID = pSnapItem->m_ID;
-            s_aClients[ClientID].m_Alive = true;
             s_aClients[ClientID].m_Character = *pObj;
             s_aClients[ClientID].m_Character.m_Tick = s_aClients[ClientID].m_Character.m_LastSnapshotTick = pObj->m_Tick;
             if(pObj->m_Tick) 
                 for(int64_t& Tick = s_aClients[ClientID].m_Character.m_Tick; Tick < DDNet::s_pClient->GameTick(); Tick++)
                     s_aClients[ClientID].m_Character.Prediction();
+            s_aClients[ClientID].m_Alive = true;
         }
         break;
 
@@ -822,7 +872,7 @@ void CSugarcane::RecvDDNetMsg(int MsgID, void *pData)
 
         if(pMsg->m_ClientID >= 0 && pMsg->m_ClientID < MAX_CLIENTS && s_aClients[pMsg->m_ClientID].m_Active && string(pMsg->m_pMessage).startswith(s_aClients[s_LocalID].m_aName))
         {
-            BackTalk(s_aClients[pMsg->m_ClientID].m_aName, pMsg->m_pMessage + str_length(s_aClients[s_LocalID].m_aName), TwsTalkBack);
+            BackResponse(std::format("Game-Chat|{}: {}", s_aClients[pMsg->m_ClientID].m_aName, pMsg->m_pMessage + str_length(s_aClients[s_LocalID].m_aName)).c_str(), TwsResponseBack);
         }
     }
     else if(MsgID == NETMSGTYPE_SV_BROADCAST)
@@ -843,6 +893,23 @@ void CSugarcane::DDNetTick(int *pInputData)
             continue;
         if(Client.m_ClientID != s_LocalID && Client.m_Team != TEAM_SPECTATORS)
             OtherPlayersCount++;
+
+        if(!Client.m_Alive)
+            continue;
+
+        if(random_int(0, 100) < 12 && !DDNet::s_pClient->SnapFindItem(IClient::SNAP_PREV, NETOBJTYPE_CHARACTER, Client.m_ClientID) && IsInfectClass(s_LocalID) != IsInfectClass(Client.m_aClan))
+        {
+            if(Client.s_LastCheckTime + std::chrono::seconds(6) < std::chrono::system_clock::now())
+            {
+                string Buffer = std::format("Game-Warning|有敌人接近: '{}'，距离你{}，你目前将'{}'(距离你{})作为攻击目标",
+                    Client.m_aName,
+                    distance(Client.m_Character.m_Pos,s_aClients[s_LocalID].m_Character.m_Pos),
+                    s_pTarget ? s_pTarget->m_aName : "None",
+                    s_pTarget ? distance(s_pTarget->m_Character.m_Pos, s_aClients[s_LocalID].m_Character.m_Pos) : 10000.f).c_str();
+                BackResponse(Buffer, TwsResponseBack, 5);
+            }
+        }
+        Client.s_LastCheckTime = std::chrono::system_clock::now();
     }
 
     if(OtherPlayersCount)
@@ -852,23 +919,19 @@ void CSugarcane::DDNetTick(int *pInputData)
             s_TargetTeam = TEAM_RED;
         }
     }
-    else
+    else if(s_LastTeamChangeTime + std::chrono::seconds(5) < std::chrono::system_clock::now())
     {
         s_TargetTeam = TEAM_SPECTATORS;
     }
 
     if(s_TargetTeam != s_aClients[s_LocalID].m_Team)
     {
-        if(s_LastTeamChangeTime + std::chrono::seconds(5) < std::chrono::system_clock::now())
-        {
-            // use elder sister
-            CNetMsg_Cl_SetTeam Msg;
-			Msg.m_Team = s_TargetTeam;
-            DDNet::s_pClient->SendPackMsg(&Msg, MSGFLAG_VITAL);
+        CNetMsg_Cl_SetTeam Msg;
+        Msg.m_Team = s_TargetTeam;
+        DDNet::s_pClient->SendPackMsg(&Msg, MSGFLAG_VITAL);
 
-            s_LastTeamChangeTime = std::chrono::system_clock::now();
-            log_msg("sugarcane/tws", "send switch team msg");
-        }
+        s_LastTeamChangeTime = std::chrono::system_clock::now();
+        log_msg("sugarcane/tws", "send switch team msg");
     }
 
     if(s_aClients[s_LocalID].m_Alive)
@@ -876,9 +939,10 @@ void CSugarcane::DDNetTick(int *pInputData)
         vec2 NowPos(s_aClients[s_LocalID].m_Character.m_Pos);
 
         // find target
-        SClient *pLastTarget = s_pTarget;
         SClient *pMoveTarget = nullptr;
-        s_pTarget = nullptr;
+        if(s_pTarget)
+            if(!s_pTarget->m_Active || !s_pTarget->m_Alive || !IsOtherTeam(s_pTarget->m_ClientID))
+                s_pTarget = nullptr;
 
         float ClosetDistance = 9000.f;
         bool SelfInfect = IsInfectClass(s_LocalID);
@@ -906,6 +970,9 @@ void CSugarcane::DDNetTick(int *pInputData)
                 }
             }
         }
+
+        bool SearchStronghold = s_LastStrongholdFindTime + std::chrono::seconds(20) < std::chrono::system_clock::now();
+        std::vector<std::pair<int, vec2>> vStrongholds;
         for(auto& Client : s_aClients)
         {
             if(Client.m_Active && Client.m_Alive && Client.m_ClientID != s_LocalID)
@@ -916,6 +983,24 @@ void CSugarcane::DDNetTick(int *pInputData)
                 if(IsOtherTeam(Client.m_ClientID))
                     Distance -= 480.0f;
 
+                if(SearchStronghold && !SelfInfect)
+                {
+                    bool FindNearest = false;
+                    for(auto& Stronghold : vStrongholds)
+                    {
+                        if(distance(Pos, Stronghold.second) < 320.f)
+                        {
+                            FindNearest = true;
+                            Stronghold.first++;
+                            break;
+                        }
+                    }
+                    if(!FindNearest)
+                    {
+                        vStrongholds.push_back(std::make_pair(1, Client.m_Character.m_Pos));
+                    }
+                }
+
                 if(Distance < ClosetDistance)
                 {
                     ClosetDistance = Distance;
@@ -923,24 +1008,49 @@ void CSugarcane::DDNetTick(int *pInputData)
                         pMoveTarget = &Client;
                     else
                     {
-                        if(SelfInfect)
-                            pMoveTarget = &Client;
                         s_pTarget = &Client;
                     }
                 }
             }
         }
+        if(SearchStronghold)
+        {
+            for(auto& Stronghold : vStrongholds)
+            {
+                if(Stronghold.first >= 3)
+                {
+                    s_MapDetail.SaveStronghold(Stronghold.second);
+                    log_msgf("sugarcane/game", "找到新的据点 {},{}", Stronghold.second.x, Stronghold.second.y);
+                }
+            }
+
+            vec2 *pFindPos = nullptr;
+            s_MapDetail.FindNearestStronghold(NowPos, &pFindPos);
+            if(pFindPos && distance(*pFindPos, NowPos) > 480.0f)
+            {
+                s_FindStronghold = true;
+                s_StrongholdPos = *pFindPos;
+                pMoveTarget = nullptr;
+            }
+            s_LastStrongholdFindTime = std::chrono::system_clock::now();
+        }
+
+        if(SelfInfect && s_pTarget)
+            pMoveTarget = s_pTarget;
 
         if(pMoveTarget)
         {
-            vec2 Pos = pMoveTarget->m_Character.m_Pos;
-            if(s_pAStar)
-                delete s_pAStar;
-
-            s_pAStar = new AStar(s_MapGridWithEntity, {Pos.y / 32, Pos.x / 32});
-            s_GoToPos = Pos;
-            s_MouseTargetTo = Pos - NowPos;
+            s_GoToPos = pMoveTarget->m_Character.m_Pos;
         }
+        else if(s_FindStronghold)
+        {
+            s_GoToPos = s_StrongholdPos;
+        }
+        if(s_pAStar)
+            delete s_pAStar;
+
+        s_pAStar = new AStar(s_MapGridWithEntity, {s_GoToPos.y / 32, s_GoToPos.x / 32});
+        s_MouseTargetTo =  normalize(s_GoToPos - NowPos) * clamp(distance(s_GoToPos, NowPos), 0.f, 400.f);
 
         if(s_pTarget)
         {
@@ -994,6 +1104,9 @@ bool CSugarcane::LoadMap(const char *pMap, int Crc)
     s_pMap = nullptr;
     s_MapWidth = 0;
     s_MapHeight = 0;
+
+    s_MapDetail.Reset();
+    s_FindStronghold = false;
 
     if(!ConvertMap(pMap, std::to_string(Crc).c_str(), &s_pMap, s_MapWidth, s_MapHeight))
     {

@@ -5,22 +5,24 @@
 
 class CSugarcane : public ISugarcane
 {
+public:
+    /* talk part */
+    typedef void (*BACK_FUNCTION)(string Response);
 private:
+    bool m_Shutdown;
     IStorage *m_pStorage;
 
     void DoInput(int *pInputData);
 
-    /* talk part */
-    typedef void (*TALKBACK_FUNCTION)(string Talk);
-
     void InitTalkPart();
-    void BackTalk(const char *pFrom, const char *pMessage, TALKBACK_FUNCTION Function);
+    void RequestLoop();
+    void BackResponse(string Request, BACK_FUNCTION Function, int Timeout = 30);
 
     /* teeworlds */
     void InitTwsPart();
     void InputPrediction();
 
-    static void TwsTalkBack(string Talk);
+    static void TwsResponseBack(string Response);
 
     SInformation *m_pInformation;
 public:

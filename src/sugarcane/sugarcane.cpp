@@ -48,6 +48,7 @@ void CSugarcane::Init(IStorage *pStorage, int argc, const char **argv)
 			m_pInformation = &s_aInformations[0];
 		log_msgf("sugarcane", "choose \"{}\" as information", m_pInformation->m_aFullName);
 	}
+	m_Shutdown = false;
 
 	InitTwsPart();
 	InitTalkPart();
@@ -61,6 +62,8 @@ void CSugarcane::Run()
 	signal(SIGTERM, HandleSigIntTerm);
 
     DDNet::ConnectTo(CR_SERVER, this);
+
+	m_Shutdown = true;
 }
 
 ISugarcane *CreateSugarcane() { return new CSugarcane(); }
