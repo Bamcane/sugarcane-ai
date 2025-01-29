@@ -859,6 +859,10 @@ void CSugarcane::RecvDDNetMsg(int MsgID, void *pData)
         DDNet::s_pClient->EnterGame();
 
         s_LastTeamChangeTime = std::chrono::system_clock::now();
+        CNetMsg_Cl_Say Msg;
+        Msg.m_pMessage = "/alwaysrandom 1";
+        Msg.m_Team = 0;
+        DDNet::s_pClient->SendPackMsg(&Msg, MSGFLAG_VITAL);
     }
     else if(MsgID == NETMSGTYPE_SV_CHAT)
     {
