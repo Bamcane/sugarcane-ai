@@ -9,9 +9,7 @@
 #include <csignal>
 
 SInformation s_aInformations[] = {
-	{"AL-1S", "Tendou Arisu", "AL-1S", "天童爱丽丝", "MSS-GDD", {"呜呜...请救救...爱丽丝", "呜呜...请救救...爱丽丝\"{}\""}},
-	{"S-SC", "Stable Sugarcane", "stablesugarcane-ai", "稳蔗", "Mid·Night", {"...请和甘箨说我的AI出现了一些故障...", "...\"{}\""}},
-	{"T-SC", "Test Sugarcane", "testsugarcane-ai", "遣蔗", "Mid·Night", {"请告诉甘箨我的AI出问题啦!", "请告诉甘箨这些!: \"{}\""}}
+	{"AL-1S", "Tendou Arisu", "", "", "天童爱丽丝", "MSS-GDD", {"呜呜...请救救...爱丽丝", "呜呜...请救救...爱丽丝\"{}\""}},
 };
 
 void HandleSigIntTerm(int Param)

@@ -5,7 +5,8 @@ struct SInformation
 {
     char m_aID[8]; // id to type
     char m_aFullName[32];
-    char m_aChatModel[32];
+    char m_aChatModel[64];
+    char m_aChatModelAPIKey[64];
     // TWS
     char m_aGameName[16];
     char m_aClan[12];

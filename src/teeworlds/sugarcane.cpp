@@ -151,8 +151,6 @@ struct SClient
     int m_Score;
     int m_Team;
 
-    std::chrono::system_clock::time_point s_LastCheckTime;
-
     SCharacter m_Character;
 
     char m_aName[MAX_NAME_LENGTH];
@@ -200,6 +198,7 @@ static vec2 s_StrongholdPos;
 static vec2 s_GoToPos;
 static vec2 s_MouseTarget;
 static vec2 s_MouseTargetTo;
+static SClient *s_pMoveTarget;
 static SClient *s_pTarget;
 constexpr float g_MaxMouseMoveSpeedPerTick = 40.0f;
 constexpr float g_MinMouseMoveSpeedPerTick = 8.0f;
@@ -215,9 +214,10 @@ static CNetObj_PlayerInput s_LastInput = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 static CNetObj_PlayerInput s_TickInput = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 static std::chrono::system_clock::time_point s_LastTeamChangeTime = std::chrono::system_clock::now();
 static std::chrono::system_clock::time_point s_LastInputTime = std::chrono::system_clock::now();
+static std::chrono::system_clock::time_point s_LastFindTeammate = std::chrono::system_clock::now();
 static std::chrono::system_clock::time_point s_LastStrongholdFindTime = std::chrono::system_clock::now();
 
-static const char *s_apInfectClasses[] = {"Hunter", "Smoker", "Spider", "Ghoul", "Undead", "Witch", "Voodoo", "Slug", "Boomer", "Bat", "Ghost", "Freezer", "Nightmare", "Slime"};
+static const char *s_apInfectClasses[] = {"Hunter", "Smoker", "Spider", "Ghoul", "Undead", "Witch", "Voodoo", "Slug", "Boomer", "Bat", "Ghost", "Freezer", "Nightmare", "Slime", "InfectBot"};
 static bool IsInfectClass(const char *pClassName)
 {
     for(auto& Infect : s_apInfectClasses)
@@ -633,6 +633,7 @@ void CSugarcane::InitTwsPart()
     s_MapWidth = 0;
     s_MapHeight = 0;
     s_TargetTeam = 0;
+    s_pMoveTarget = nullptr;
     s_pTarget = nullptr;
     s_MouseTarget = vec2(0.f, 0.f);
     s_MouseTargetTo = vec2(0.f, 0.f);
@@ -735,7 +736,8 @@ void CSugarcane::InputPrediction()
         if(!TargetHook)
         {
             s_MouseTargetTo = s_pTarget->m_Character.m_Pos - NowPos;
-            if(distance(s_pTarget->m_Character.m_Pos, NowPos) < GetWeaponDistance(ActiveWeapon) && distance(normalize(s_MouseTarget), normalize(s_MouseTargetTo)) < 0.5f)
+            ESMapItems Hit = IntersectLine(NowPos, s_pTarget->m_Character.m_Pos, nullptr, nullptr);
+            if(!(Hit & ESMapItems::TILEFLAG_SOLID) && distance(s_pTarget->m_Character.m_Pos, NowPos) < GetWeaponDistance(ActiveWeapon) && distance(normalize(s_MouseTarget), normalize(s_MouseTargetTo)) < 0.5f)
             {
                 s_TickInput.m_Fire = !s_LastInput.m_Fire;
             }
@@ -744,57 +746,12 @@ void CSugarcane::InputPrediction()
     MoveCursor();
 }
 
-std::vector<std::string> devide_command(const std::string& input)
-{
-    std::vector<std::string> vBuffers;
-    size_t last_pos = 0;
-    size_t pos = input.find("[;;;]", 0);
-    if(pos == std::string::npos)
-        pos = input.size();
-    do
-    {
-        vBuffers.push_back(std::string(input.substr(last_pos, pos - last_pos)));
-        last_pos = pos + str_length("[;;;]");
-    }
-    while((pos = input.find("[;;;]", pos + str_length("[;;;]"))) != std::string::npos);
-    return vBuffers;
-}
-
 void CSugarcane::TwsResponseBack(string Response)
 {
-    auto vCommands = devide_command(Response.c_str());
-    auto Function = [](string Response)
-    {
-        log_msgf("sugarcane/game", "调用指令'{}'", Response.c_str());
-        if(Response.startswith("/say "))
-        {
-            CNetMsg_Cl_Say Msg;
-            Msg.m_pMessage = Response.substr(strlen("/say"));
-            Msg.m_Team = 0;
-            DDNet::s_pClient->SendPackMsg(&Msg, MSGFLAG_VITAL);
-        }
-        else if(Response.startswith("/target "))
-        {
-            string NewTarget = Response.substr(8);
-            log_msgf("sugarcane/game", "搜索目标'{}'", NewTarget.c_str());
-            for(auto& Client : s_aClients)
-            {
-                if(!Client.m_Alive)
-                    continue;
-                if(NewTarget == string(Client.m_aName))
-                {
-                    s_pTarget = &Client;
-                    log_msgf("sugarcane/game", "目标切换到'{}'", Client.m_aName);
-                    break;
-                }
-            }
-        }
-    };
-
-    for(auto& Command : vCommands)
-    {
-        Function(Command.c_str());
-    }
+    CNetMsg_Cl_Say Msg;
+    Msg.m_pMessage = Response.c_str();
+    Msg.m_Team = 0;
+    DDNet::s_pClient->SendPackMsg(&Msg, MSGFLAG_VITAL);
 }
 
 void CSugarcane::OnNewSnapshot(void *pItem, const void *pData)
@@ -825,8 +782,6 @@ void CSugarcane::OnNewSnapshot(void *pItem, const void *pData)
             s_aClients[ClientID].m_Score = pObj->m_Score;
 
             s_aClients[ClientID].m_Active = true;
-            if(!DDNet::s_pClient->SnapFindItem(IClient::SNAP_PREV, NETOBJTYPE_PLAYERINFO, ClientID))
-                s_aClients[ClientID].s_LastCheckTime = std::chrono::system_clock::now();
         }
         break;
 
@@ -897,23 +852,6 @@ void CSugarcane::DDNetTick(int *pInputData)
             continue;
         if(Client.m_ClientID != s_LocalID && Client.m_Team != TEAM_SPECTATORS)
             OtherPlayersCount++;
-
-        if(!Client.m_Alive)
-            continue;
-
-        if(random_int(0, 100) < 12 && !DDNet::s_pClient->SnapFindItem(IClient::SNAP_PREV, NETOBJTYPE_CHARACTER, Client.m_ClientID) && IsInfectClass(s_LocalID) != IsInfectClass(Client.m_aClan))
-        {
-            if(Client.s_LastCheckTime + std::chrono::seconds(6) < std::chrono::system_clock::now())
-            {
-                string Buffer = std::format("Game-Warning|有敌人接近: '{}'，距离你{}，你目前将'{}'(距离你{})作为攻击目标",
-                    Client.m_aName,
-                    distance(Client.m_Character.m_Pos,s_aClients[s_LocalID].m_Character.m_Pos),
-                    s_pTarget ? s_pTarget->m_aName : "None",
-                    s_pTarget ? distance(s_pTarget->m_Character.m_Pos, s_aClients[s_LocalID].m_Character.m_Pos) : 10000.f).c_str();
-                BackResponse(Buffer, TwsResponseBack, 5);
-            }
-        }
-        Client.s_LastCheckTime = std::chrono::system_clock::now();
     }
 
     if(OtherPlayersCount)
@@ -943,10 +881,12 @@ void CSugarcane::DDNetTick(int *pInputData)
         vec2 NowPos(s_aClients[s_LocalID].m_Character.m_Pos);
 
         // find target
-        SClient *pMoveTarget = nullptr;
         if(s_pTarget)
             if(!s_pTarget->m_Active || !s_pTarget->m_Alive || !IsOtherTeam(s_pTarget->m_ClientID))
                 s_pTarget = nullptr;
+        if(s_pMoveTarget)
+            if(!s_pMoveTarget->m_Active || !s_pMoveTarget->m_Alive)
+                s_pMoveTarget = nullptr;
 
         float ClosetDistance = 9000.f;
         bool SelfInfect = IsInfectClass(s_LocalID);
@@ -975,6 +915,7 @@ void CSugarcane::DDNetTick(int *pInputData)
             }
         }
 
+        bool SearchNewTeammate = !s_pMoveTarget || s_LastFindTeammate + std::chrono::seconds(7) < std::chrono::system_clock::now();
         bool SearchStronghold = s_LastStrongholdFindTime + std::chrono::seconds(20) < std::chrono::system_clock::now();
         std::vector<std::pair<int, vec2>> vStrongholds;
         for(auto& Client : s_aClients)
@@ -1009,7 +950,10 @@ void CSugarcane::DDNetTick(int *pInputData)
                 {
                     ClosetDistance = Distance;
                     if(!IsOtherTeam(Client.m_ClientID))
-                        pMoveTarget = &Client;
+                    {
+                        if(SearchNewTeammate)
+                            s_pMoveTarget = &Client;
+                    }
                     else
                     {
                         s_pTarget = &Client;
@@ -1017,6 +961,8 @@ void CSugarcane::DDNetTick(int *pInputData)
                 }
             }
         }
+        if(SearchNewTeammate)
+            s_LastFindTeammate = std::chrono::system_clock::now();
         if(SearchStronghold)
         {
             for(auto& Stronghold : vStrongholds)
@@ -1034,17 +980,17 @@ void CSugarcane::DDNetTick(int *pInputData)
             {
                 s_FindStronghold = true;
                 s_StrongholdPos = *pFindPos;
-                pMoveTarget = nullptr;
+                s_pMoveTarget = nullptr;
             }
             s_LastStrongholdFindTime = std::chrono::system_clock::now();
         }
 
         if(SelfInfect && s_pTarget)
-            pMoveTarget = s_pTarget;
+            s_pMoveTarget = s_pTarget;
 
-        if(pMoveTarget)
+        if(s_pMoveTarget)
         {
-            s_GoToPos = pMoveTarget->m_Character.m_Pos;
+            s_GoToPos = s_pMoveTarget->m_Character.m_Pos;
         }
         else if(s_FindStronghold)
         {
